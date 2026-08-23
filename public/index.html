@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Radar — Inteligência e Mineração de Leads B2B</title>
+<style>
+  :root{
+    --bg:#080b11; --panel:#0f141d; --panel-2:#141b26; --line:#1e2734;
+    --txt:#e6edf7; --dim:#8b9bb4; --acc:#00e5a0; --acc-2:#3d8bff;
+    --alta:#ff5c7a; --media:#ffb547; --baixa:#5d7085;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1100px 500px at 15% -10%, #0d2a3a 0%, transparent 60%),
+      radial-gradient(900px 400px at 90% 0%, #16173a 0%, transparent 55%), var(--bg);
+    color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+  a{color:var(--acc-2);text-decoration:none} a:hover{text-decoration:underline}
+  header{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;
+    padding:18px 24px;border-bottom:1px solid var(--line);background:rgba(8,11,17,.7);
+    backdrop-filter:blur(8px);position:sticky;top:0;z-index:20}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;letter-spacing:.3px}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 0 rgba(0,229,160,.6);
+    animation:pulse 2s infinite}
+  @keyframes pulse{70%{box-shadow:0 0 0 12px rgba(0,229,160,0)}100%{box-shadow:0 0 0 0 rgba(0,229,160,0)}}
+  .brand small{display:block;font-weight:400;font-size:11px;color:var(--dim);letter-spacing:.6px;text-transform:uppercase}
+  main{padding:20px 24px 60px;max-width:1600px;margin:0 auto}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:linear-gradient(160deg,var(--panel-2),var(--panel));border:1px solid var(--line);
+    border-radius:12px;padding:14px 16px}
+  .kpi b{display:block;font-size:26px;line-height:1.2;font-variant-numeric:tabular-nums}
+  .kpi span{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px}
+  .filters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+  label{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);display:block;margin-bottom:4px}
+  select,input,textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--txt);
+    border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
+  select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+  .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+  button{background:var(--panel-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
+    padding:8px 14px;font:inherit;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--acc);color:var(--acc)}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#04140e;font-weight:600}
+  button.primary:hover{filter:brightness(1.1);color:#04140e}
+  .muted{color:var(--dim);font-size:12px}
+  .tablewrap{border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--panel)}
+  table{border-collapse:collapse;width:100%;min-width:1150px}
+  th{position:sticky;top:0;background:var(--panel-2);text-align:left;font-size:10px;letter-spacing:.8px;
+    text-transform:uppercase;color:var(--dim);padding:11px 12px;border-bottom:1px solid var(--line);z-index:5}
+  td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:hover{background:#121a26;cursor:pointer}
+  .co{font-weight:600} .co small{display:block;font-weight:400;color:var(--dim);font-size:11px}
+  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;border:1px solid var(--line);
+    background:var(--panel-2);white-space:nowrap}
+  .prio{font-weight:700;font-size:11px;letter-spacing:.5px}
+  .prio.Alta{color:var(--alta)} .prio.Média{color:var(--media)} .prio.Baixa{color:var(--baixa)}
+  .bar{height:4px;border-radius:3px;background:#1b2432;margin-top:5px;overflow:hidden;width:80px}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc-2),var(--acc))}
+  .off{font-size:12px;line-height:1.35;max-width:250px;display:block}
+  .web{font-size:11px;color:var(--dim);line-height:1.6}
+  .tag-nenhum{color:var(--alta)} .tag-defasado{color:var(--media)} .tag-lento{color:var(--media)}
+  select.st{padding:5px 7px;font-size:11px;width:auto}
+  /* gaveta */
+  #ov{position:fixed;inset:0;background:rgba(3,6,10,.65);backdrop-filter:blur(3px);display:none;z-index:40}
+  #dw{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--panel);
+    border-left:1px solid var(--line);transform:translateX(100%);transition:transform .22s ease;
+    z-index:50;overflow-y:auto;padding:22px 24px 60px}
+  #dw.open{transform:none}
+  #dw h2{margin:0 0 2px;font-size:20px} #dw h3{font-size:11px;text-transform:uppercase;letter-spacing:.9px;
+    color:var(--dim);margin:22px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:13px}
+  .kv span{color:var(--dim)}
+  .close{position:absolute;top:16px;right:18px}
+  .script{background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:13px;font-size:13px;line-height:1.6;white-space:pre-wrap}
+  ul.mot{margin:6px 0 0 18px;padding:0;font-size:13px} ul.mot li{margin:3px 0}
+  .rank{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12px}
+  @media (max-width:700px){main{padding:14px}header{padding:14px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span>
+    <div>LEAD RADAR<small>Inteligência &amp; Mineração de Leads B2B</small></div>
+  </div>
+  <div class="muted" id="resumo">carregando…</div>
+</header>
+
+<main>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="filters" id="filtros">
+    <div><label>Busca livre</label><input id="q" placeholder="nome, CNAE, dor…"></div>
+    <div><label>Nicho / Segmento</label><select id="nicho"><option value="">Todos</option></select></div>
+    <div><label>Estado</label><select id="uf"><option value="">Todos</option></select></div>
+    <div><label>Cidade</label><select id="cidade"><option value="">Todas</option></select></div>
+    <div><label>Porte</label><select id="porte">
+      <option value="">Todos</option><option>ME</option><option>EPP</option><option>MEDIA</option></select></div>
+    <div><label>Tempo de atividade</label><select id="anos">
+      <option value="0">Qualquer</option><option value="1">1+ ano</option><option value="3">3+ anos</option>
+      <option value="5">5+ anos</option><option value="10">10+ anos</option></select></div>
+    <div><label>Oportunidade</label><select id="oferta"><option value="">Todas</option>
+      <option value="erp">💡 Sistema de Gestão / ERP</option><option value="ia">🤖 Automação &amp; IA</option>
+      <option value="mobile">📱 App / Área do Cliente</option><option value="api">🔗 Integração de APIs</option>
+      <option value="web">⚡ Plataforma Web</option></select></div>
+    <div><label>Prioridade</label><select id="prioridade"><option value="">Todas</option>
+      <option>Alta</option><option>Média</option><option>Baixa</option></select></div>
+    <div><label>Status prospecção</label><select id="status"><option value="">Todos</option>
+      <option value="novo">Novo</option><option value="contatado">Contatado</option><option value="reuniao">Reunião</option>
+      <option value="proposta">Proposta</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option>
+    </select></div>
+  </div>
+
+  <div class="actions">
+    <button class="primary" id="exp">⬇ Exportar CSV / Excel</button>
+    <button id="limpar">Limpar filtros</button>
+    <span class="muted">Em lote:</span>
+    <select class="st" id="lote">
+      <option value="">marcar selecionados como…</option>
+      <option value="novo">Novo</option><option value="contatado">Contatado</option><option value="reuniao">Reunião</option>
+      <option value="proposta">Proposta</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option>
+    </select>
+    <span class="muted" id="sel">0 selecionados</span>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th><input type="checkbox" id="all" style="width:auto"></th>
+        <th>Empresa</th><th>Segmento</th><th>Contato</th><th>Cidade</th>
+        <th>Presença digital</th><th>Oportunidade sugerida</th><th>Prior.</th><th>Status</th>
+      </tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+</main>
+
+<div id="ov"></div>
+<aside id="dw"><button class="close" id="fechar">✕</button><div id="dwc"></div></aside>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const F = ['q','nicho','uf','cidade','porte','anos','oferta','prioridade','status'];
+const STATUS = {novo:'Novo',contatado:'Contatado',reuniao:'Reunião',proposta:'Proposta',ganho:'Ganho',perdido:'Perdido'};
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const zap = (n) => 'https://wa.me/55' + String(n).replace(/\D/g,'');
+let leads = [], sel = new Set();
+
+const params = () => {
+  const p = new URLSearchParams();
+  for (const f of F) { const v = $('#'+f).value; if (v && v !== '0') p.set(f, v); }
+  return p;
+};
+
+async function carregar() {
+  const r = await fetch('/api/leads?' + params());
+  const d = await r.json();
+  leads = d.leads;
+  for (const [id, vals] of [['nicho', d.facetas.nichos], ['uf', d.facetas.ufs], ['cidade', d.facetas.cidades]]) {
+    const el = $('#'+id);
+    if (el.options.length > 1) continue;
+    for (const v of vals) el.add(new Option(v[0].toUpperCase()+v.slice(1), v));
+  }
+  render(d.total);
+}
+
+function render(total) {
+  const alta = leads.filter(l => l.prioridade === 'Alta').length;
+  const conta = (o) => leads.filter(l => l.oferta === o).length;
+  $('#kpis').innerHTML = [
+    ['Leads na visão', total], ['Prioridade alta', alta],
+    ['💡 ERP / Gestão', conta('erp')], ['🤖 Automação IA', conta('ia')],
+    ['📱 App / Cliente', conta('mobile')], ['🔗 APIs', conta('api')], ['⚡ Web', conta('web')],
+  ].map(([k, v]) => `<div class="kpi"><b>${v}</b><span>${k}</span></div>`).join('');
+  $('#resumo').textContent = `${total} empresas mineradas · ${alta} com prioridade alta`;
+
+  $('#tb').innerHTML = leads.map((l, i) => `<tr data-i="${i}">
+    <td><input type="checkbox" class="ck" data-cnpj="${l.cnpj}" style="width:auto" ${sel.has(l.cnpj)?'checked':''}></td>
+    <td class="co">${esc(l.nome)}<small>${esc(l.razao_social)}</small><small>${l.cnpj} · ${l.anos} anos · ${l.porte}</small></td>
+    <td><span class="pill">${esc(l.nicho)}</span><small class="web">${esc(l.cnae.split(' - ')[0])}</small></td>
+    <td class="web">${l.whatsapp ? `<a href="${zap(l.whatsapp)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a><br>` : ''}
+        ☎ ${esc(l.telefone)}<br><a href="mailto:${esc(l.email)}">✉ ${esc(l.email)}</a></td>
+    <td>${esc(l.cidade)}<small class="web">${l.uf}</small></td>
+    <td class="web">${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">🌐 ${esc(l.site)}</a>
+        <br><span class="tag-${l.site_status}">site ${l.site_status}</span>` : '<span class="tag-nenhum">sem site</span>'}
+        ${l.instagram ? `<br>📷 ${esc(l.instagram)} (${l.seguidores.toLocaleString('pt-BR')})` : ''}</td>
+    <td><span class="off">${esc(l.oferta_tag)}</span><div class="bar"><i style="width:${Math.min(100,l.score)}%"></i></div>
+        <small class="web">score ${l.score}</small></td>
+    <td><span class="prio ${l.prioridade}">${l.prioridade}</span></td>
+    <td><select class="st" data-cnpj="${l.cnpj}">${Object.entries(STATUS)
+        .map(([v, t]) => `<option value="${v}" ${l.status===v?'selected':''}>${t}</option>`).join('')}</select></td>
+  </tr>`).join('') || `<tr><td colspan="9" style="padding:30px;text-align:center" class="muted">
+      Nenhuma empresa bate com esses filtros.</td></tr>`;
+  $('#sel').textContent = sel.size + ' selecionados';
+}
+
+function raioX(l) {
+  $('#dwc').innerHTML = `
+    <h2>${esc(l.nome)}</h2>
+    <div class="muted">${esc(l.razao_social)}</div>
+    <div style="margin-top:10px"><span class="pill">${esc(l.oferta_tag)}</span>
+      <span class="prio ${l.prioridade}" style="margin-left:8px">PRIORIDADE ${l.prioridade.toUpperCase()}</span></div>
+
+    <h3>Cadastro</h3>
+    <div class="kv">
+      <span>CNPJ</span><div>${l.cnpj}</div>
+      <span>CNAE</span><div>${esc(l.cnae)}</div>
+      <span>Abertura</span><div>${new Date(l.abertura).toLocaleDateString('pt-BR')} (${l.anos} anos de mercado)</div>
+      <span>Porte</span><div>${l.porte} · ${l.funcionarios} funcionários · ${l.unidades} unidade(s)</div>
+      <span>Localização</span><div>${esc(l.cidade)} / ${l.uf}</div>
+    </div>
+
+    <h3>Contato</h3>
+    <div class="kv">
+      <span>WhatsApp</span><div>${l.whatsapp ? `<a href="${zap(l.whatsapp)}" target="_blank" rel="noopener">${l.whatsapp}</a>` : '—'}</div>
+      <span>Telefone</span><div>${esc(l.telefone)}</div>
+      <span>E-mail</span><div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>
+      <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>` : '<span class="tag-nenhum">não possui</span>'}</div>
+      <span>Instagram</span><div>${l.instagram ? `${esc(l.instagram)} · ${l.seguidores.toLocaleString('pt-BR')} seguidores` : '—'}</div>
+    </div>
+
+    <h3>Diagnóstico operacional</h3>
+    <div class="kv">
+      <span>Sistemas hoje</span><div>${l.sistemas.map(esc).join(' · ')}</div>
+      <span>Volume atendimento</span><div>${l.volume_atendimento}</div>
+      <span>Recorrência</span><div>${l.recorrencia ? 'sim — base de clientes ativa' : 'não'}</div>
+      <span>Observação</span><div>${esc(l.obs)}</div>
+    </div>
+
+    <h3>Por que essa oferta (score ${l.score})</h3>
+    <ul class="mot">${l.motivos.map(m => `<li>${esc(m)}</li>`).join('') || '<li class="muted">sem sinais fortes</li>'}</ul>
+
+    <h3>Ranking de oportunidades</h3>
+    ${l.ofertas.map(o => `<div class="rank"><span>${esc(o.tag)}</span><b>${o.score}</b></div>`).join('')}
+
+    <h3>Gancho de abordagem</h3>
+    <div class="script">${esc(l.gancho)}</div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="copiar">📋 Copiar script</button>
+      ${l.whatsapp ? `<button class="primary" onclick="window.open('${zap(l.whatsapp)}?text=' + encodeURIComponent(${JSON.stringify(l.gancho)}),'_blank')">Abrir WhatsApp</button>` : ''}
+    </div>`;
+  $('#copiar').onclick = async (e) => {
+    await navigator.clipboard.writeText(l.gancho);
+    e.target.textContent = '✓ copiado';
+  };
+  $('#dw').classList.add('open'); $('#ov').style.display = 'block';
+}
+
+const fechar = () => { $('#dw').classList.remove('open'); $('#ov').style.display = 'none'; };
+$('#fechar').onclick = fechar; $('#ov').onclick = fechar;
+addEventListener('keydown', (e) => e.key === 'Escape' && fechar());
+
+const salvar = (cnpj, status) =>
+  fetch('/api/status', {method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({cnpj, status})});
+
+$('#tb').addEventListener('click', (e) => {
+  if (e.target.matches('.ck')) {
+    sel.has(e.target.dataset.cnpj) ? sel.delete(e.target.dataset.cnpj) : sel.add(e.target.dataset.cnpj);
+    return void ($('#sel').textContent = sel.size + ' selecionados');
+  }
+  if (e.target.closest('select')) return;
+  const tr = e.target.closest('tr[data-i]');
+  if (tr) raioX(leads[tr.dataset.i]);
+});
+$('#tb').addEventListener('change', async (e) => {
+  if (!e.target.matches('select.st')) return;
+  await salvar(e.target.dataset.cnpj, e.target.value);
+  const l = leads.find(x => x.cnpj === e.target.dataset.cnpj); if (l) l.status = e.target.value;
+});
+$('#all').onchange = (e) => {
+  sel = e.target.checked ? new Set(leads.map(l => l.cnpj)) : new Set();
+  document.querySelectorAll('.ck').forEach(c => c.checked = e.target.checked);
+  $('#sel').textContent = sel.size + ' selecionados';
+};
+$('#lote').onchange = async (e) => {
+  const s = e.target.value; e.target.value = '';
+  if (!s || !sel.size) return;
+  await Promise.all([...sel].map(c => salvar(c, s)));
+  sel = new Set(); carregar();
+};
+$('#exp').onclick = () => location.assign('/api/export.csv?' + params());
+$('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : ''); carregar(); };
+for (const f of F) $('#'+f).addEventListener(f === 'q' ? 'input' : 'change', debounce(carregar));
+function debounce(fn){ let t; return () => { clearTimeout(t); t = setTimeout(fn, 250); }; }
+
+carregar();
+</script>
+</body>
+</html>
