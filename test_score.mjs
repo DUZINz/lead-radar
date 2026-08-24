@@ -30,4 +30,13 @@ assert.ok(l.motivos.length >= 2 && l.ofertas[0].score >= l.ofertas.at(-1).score,
 assert.equal(l.anos, Math.floor((Date.now() - new Date('2015-01-01')) / 31557600000));
 assert.equal(l.status, 'novo');
 
-console.log('ok — motor de oportunidade');
+// lead minerado: sem data de abertura, sem sistemas, sem quadro de funcionários
+const real = e({ nome: 'Clínica Real', abertura: null, sistemas: [], funcionarios: 0, email: '',
+  site: '', site_status: 'nenhum', nicho: 'saude', volume_atendimento: 'alto',
+  whatsapp: '(41) 99999-0000', recorrencia: true, origem: 'osm' });
+assert.equal(real.anos, null, 'idade desconhecida não vira 56 anos');
+assert.equal(real.prioridade, 'Alta', 'dois vetores fortes (web sem presença + IA alto volume) = Alta');
+assert.ok(!real.gancho.includes('undefined') && !real.gancho.includes('0 pessoas'), 'gancho sem buraco de dado');
+assert.equal(e({ abertura: null, sistemas: [], site_status: 'moderno' }).prioridade, 'Baixa');
+
+console.log('ok — motor de oportunidade (mock + lead minerado)');
