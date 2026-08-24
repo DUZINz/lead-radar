@@ -13,11 +13,45 @@ npm start          # ou: node server.mjs
 npm test           # self-check do motor de oportunidade
 ```
 
+## Deploy na Vercel
+
+```bash
+npx vercel          # preview
+npx vercel --prod   # produção
+```
+
+Ou conecte o repositório no painel da Vercel — não há build step, é zero-config:
+
+- `public/` é servido como estático (é o output directory padrão quando existe).
+- `api/index.mjs` é a Serverless Function; o `rewrite` do `vercel.json` manda todo `/api/*` para ela,
+  que apenas reexporta o handler de `server.mjs` — mesmo código do local, sem duplicação.
+- `includeFiles: leads.json` garante a base mock dentro do bundle da function.
+- `maxDuration: 60` porque a mineração leva de 7s a 30s (Overpass + teste de sites).
+
+**Persistência lá é outra:** o filesystem é read-only e cada invocação pode cair numa instância nova,
+então `server.mjs` detecta `process.env.VERCEL` e troca o SQLite por um store vazio — nenhum
+`import` de `node:sqlite` acontece. Quem guarda o estado é o navegador:
+
+| Dado | Local | Vercel |
+|---|---|---|
+| Status de prospecção | SQLite + localStorage | localStorage |
+| Leads minerados | SQLite + localStorage | localStorage |
+| Leads descartados | SQLite + localStorage | localStorage |
+| Mock, scoring, mineração | stateless | stateless |
+
+Por isso o filtro, o CSV e os KPIs são calculados no cliente: o servidor não enxerga o que está no
+navegador. O botão **🧹 Limpar dados locais** zera esse estado.
+
+`npm test` cobre os dois caminhos: `test_score.mjs` (motor) e `test_serverless.mjs` (a function
+importa, responde e não toca em disco).
+
 ## Arquivos
 
 | Arquivo | O quê |
 |---|---|
-| `server.mjs` | HTTP + motor de oportunidade (scoring) + persistência SQLite |
+| `server.mjs` | handler HTTP + motor de scoring + mineração; servidor local ou function na Vercel |
+| `api/index.mjs` | Serverless Function da Vercel — reexporta o handler |
+| `vercel.json` | rewrite `/api/*` → function, `maxDuration`, `includeFiles` |
 | `leads.json` | Base minerada (33 empresas mock, 12 nichos, dados de CNPJ/CNAE/presença digital) |
 | `public/index.html` | UI dark-tech completa (dashboard, tabela, filtros, Raio-X, exportação) |
 | `leadradar.db` | SQLite criado no primeiro run: status de prospecção + histórico de buscas |

@@ -1,14 +1,19 @@
 // Lead Radar — servidor + motor de oportunidade. Zero dependencias: so stdlib do Node 24.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5173;
+const SERVERLESS = !!process.env.VERCEL;   // Vercel: disco read-only e instância efêmera
 
-const db = new DatabaseSync(join(DIR, 'leadradar.db'));
+// Local: SQLite de verdade. Serverless: store vazio — quem guarda status, minerados e
+// descartados é o localStorage do navegador (o servidor lá é stateless por definição).
+const db = SERVERLESS
+  ? { exec: () => {}, prepare: () => ({ run: () => ({ changes: 0 }), all: () => [] }) }
+  : new (await import('node:sqlite')).DatabaseSync(join(DIR, 'leadradar.db'));
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS status (
     cnpj TEXT PRIMARY KEY, status TEXT NOT NULL, nota TEXT DEFAULT '', atualizado_em TEXT NOT NULL);
@@ -168,21 +173,40 @@ const nomeCidade = (c) => /[^\x00-\x7F]/.test(c)
     }).join('') + '$')}`;
 
 async function overpass(cat, cidade, uf, limite) {
-  const q = `[out:json][timeout:60];
+  // nome exato resolve em ~7s; a regex tolerante a acento custa 3-4x mais, então só entra se a exata falhar
+  const tentativas = [`"name"=${JSON.stringify(cidade)}`];
+  if (!/[^\x00-\x7F]/.test(cidade)) tentativas.push(nomeCidade(cidade));
+
+  let erro;
+  for (const filtro of tentativas) {
+    const q = `[out:json][timeout:60];
 area[admin_level=4]["name"=${JSON.stringify(UF_NOME[uf] ?? uf)}]->.uf;
-area[admin_level=8][${nomeCidade(cidade)}](area.uf)->.a;
+area[admin_level=8][${filtro}](area.uf)->.a;
 (${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
 out center tags ${Math.min(limite * 6, 400)};`;
-  let erro;
-  for (const url of OVERPASS) {
-    try {
-      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA },
-        body: q, signal: AbortSignal.timeout(75000) });
-      if (!r.ok) { erro = new Error(`Overpass ${r.status}`); continue; }
-      return (await r.json()).elements ?? [];
-    } catch (e) { erro = e; }
+    for (const url of OVERPASS) {
+      try {
+        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA },
+          body: q, signal: AbortSignal.timeout(45000) });
+        const txt = await r.text();
+        let dados;
+        // sob carga o Overpass responde XML/HTML de rate limit em vez de JSON
+        try { dados = JSON.parse(txt); } catch {
+          erro = new Error(/rate|too many|slot|load/i.test(txt)
+            ? 'Base pública ocupada no momento (limite de requisições) — tente de novo em alguns segundos'
+            : `Resposta inválida da base pública (HTTP ${r.status})`);
+          continue;
+        }
+        if (!r.ok) { erro = new Error(`Overpass ${r.status}`); continue; }
+        const els = dados.elements ?? [];
+        if (els.length) return els;
+        erro = null;
+        break;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
+      } catch (e) { erro = e; }
+    }
   }
-  throw erro ?? new Error('Overpass indisponível');
+  if (erro) throw erro;
+  return [];
 }
 
 // mede o site de verdade: rapido = moderno, arrastado = lento, quebrado/timeout = defasado, DNS morto = nenhum
@@ -315,11 +339,20 @@ const csv = (rows) => '﻿' + [CSV_COLS.join(';'), ...rows.map((r) =>
 
 // ---------------- http ----------------
 
+// Body: a Vercel já entrega req.body parseado; local vem stream. Concatenar Buffer e decodificar
+// uma vez só — decodificar chunk a chunk quebra caractere multibyte ("Maringá" virava lixo).
+async function corpo(req) {
+  if (req.body != null) return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
+  const partes = [];
+  for await (const c of req) partes.push(c);
+  return JSON.parse(Buffer.concat(partes).toString('utf8') || '{}');
+}
+
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
 const json = (res, data, code = 200) =>
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(data));
 
-const server = createServer(async (req, res) => {
+export default async function handler(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
   try {
@@ -341,9 +374,7 @@ const server = createServer(async (req, res) => {
       });
     }
     if (req.method === 'POST' && p === '/api/status') {
-      let raw = '';
-      for await (const c of req) raw += c;
-      const body = JSON.parse(raw || '{}');
+      const body = await corpo(req);
       if (!body.cnpj || !['novo', 'contatado', 'reuniao', 'proposta', 'ganho', 'perdido'].includes(body.status))
         return json(res, { erro: 'cnpj e status válidos são obrigatórios' }, 400);
       db.prepare(`INSERT INTO status (cnpj, status, nota, atualizado_em) VALUES (?, ?, ?, ?)
@@ -352,18 +383,14 @@ const server = createServer(async (req, res) => {
       return json(res, { ok: true });
     }
     if (req.method === 'POST' && p === '/api/minerar') {
-      let raw = '';
-      for await (const c of req) raw += c;
       const t = Date.now();
-      const r = await minerar(JSON.parse(raw || '{}'));
+      const r = await minerar(await corpo(req));
       console.log(`minerado: ${r.novos} novos de ${r.encontrados} em ${((Date.now() - t) / 1000).toFixed(1)}s`);
       return json(res, r);
     }
 
     if (req.method === 'POST' && (p === '/api/excluir' || p === '/api/restaurar')) {
-      let raw = '';
-      for await (const c of req) raw += c;
-      const { cnpjs = [] } = JSON.parse(raw || '{}');
+      const { cnpjs = [] } = await corpo(req);
       if (!Array.isArray(cnpjs) || !cnpjs.length) return json(res, { erro: 'informe cnpjs: [...]' }, 400);
       if (p === '/api/restaurar') {
         const del = db.prepare('DELETE FROM descartados WHERE cnpj = ?');
@@ -398,7 +425,8 @@ const server = createServer(async (req, res) => {
     console.error(e);
     json(res, { erro: e.message }, 500);
   }
-});
+}
 
+// servidor local; na Vercel quem invoca o handler é a Serverless Function (api/index.mjs)
 if (process.argv[1] === fileURLToPath(import.meta.url))
-  server.listen(PORT, () => console.log(`\n  Lead Radar rodando em http://localhost:${PORT}\n`));
+  createServer(handler).listen(PORT, () => console.log(`\n  Lead Radar rodando em http://localhost:${PORT}\n`));

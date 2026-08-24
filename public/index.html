@@ -170,6 +170,7 @@
       <option value="proposta">Proposta</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option>
     </select>
     <button id="del-lote">🗑 Excluir selecionados</button>
+    <button id="reset" title="Zera status, leads minerados e exclusões guardados neste navegador">🧹 Limpar dados locais</button>
     <span class="muted" id="sel">0 selecionados</span>
     <span id="undo"></span>
   </div>
@@ -195,30 +196,67 @@ const F = ['q','nicho','uf','cidade','porte','anos','oferta','prioridade','statu
 const STATUS = {novo:'Novo',contatado:'Contatado',reuniao:'Reunião',proposta:'Proposta',ganho:'Ganho',perdido:'Perdido'};
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const zap = (n) => 'https://wa.me/55' + String(n).replace(/\D/g,'');
-let leads = [], sel = new Set();
+let leads = [], todos = [], sel = new Set();
 
-const params = () => {
-  const p = new URLSearchParams();
-  for (const f of F) { const v = $('#'+f).value; if (v && v !== '0') p.set(f, v); }
-  return p;
+// Estado do usuário mora no navegador: na Vercel a função é stateless e efêmera, então
+// status, leads minerados e exclusões só sobrevivem aqui. Local, o SQLite guarda em paralelo.
+const LS = {
+  ler: (k, padrao) => { try { return JSON.parse(localStorage.getItem('lr.' + k)) ?? padrao; } catch { return padrao; } },
+  gravar: (k, v) => { try { localStorage.setItem('lr.' + k, JSON.stringify(v)); } catch {} },
+};
+let statusLocal = LS.ler('status', {});          // { cnpj: 'contatado' }
+let minerados  = LS.ler('minerados', []);        // leads reais já enriquecidos
+let descartados = new Set(LS.ler('descartados', []));
+
+const valor = (f) => $('#'+f).value;
+
+// filtro no cliente: o servidor não conhece os leads minerados nem os status guardados aqui
+const filtrar = (lista) => {
+  const txt = valor('q').toLowerCase().trim(), anos = Number(valor('anos') || 0);
+  return lista.filter((l) =>
+    (!valor('nicho') || l.nicho === valor('nicho')) &&
+    (!valor('uf') || l.uf === valor('uf')) &&
+    (!valor('cidade') || l.cidade === valor('cidade')) &&
+    (!valor('porte') || l.porte === valor('porte')) &&
+    (!valor('oferta') || l.oferta === valor('oferta')) &&
+    (!valor('prioridade') || l.prioridade === valor('prioridade')) &&
+    (!valor('status') || l.status === valor('status')) &&
+    (l.anos ?? -1) >= anos &&
+    (!txt || [l.nome, l.razao_social, l.cidade, l.cnae, l.obs].join(' ').toLowerCase().includes(txt)))
+    .sort((a, b) => b.score - a.score || b.score_total - a.score_total);
 };
 
-async function carregar() {
-  const r = await fetch('/api/leads?' + params());
-  const d = await r.json();
-  leads = d.leads;
-  for (const [id, vals] of [['nicho', d.facetas.nichos], ['uf', d.facetas.ufs], ['cidade', d.facetas.cidades]]) {
+function base() {
+  const vistos = new Set();
+  return [...minerados, ...todos].filter((l) => {
+    if (descartados.has(l.cnpj) || vistos.has(l.cnpj)) return false;
+    vistos.add(l.cnpj);
+    return true;
+  }).map((l) => ({ ...l, status: statusLocal[l.cnpj] ?? l.status }));
+}
+
+function aplicar() {
+  const b = base();
+  for (const [id, campo] of [['nicho', 'nicho'], ['uf', 'uf'], ['cidade', 'cidade']]) {
     const el = $('#'+id), atual = el.value;
     el.length = 1;
-    for (const v of vals) el.add(new Option(v[0].toUpperCase()+v.slice(1), v));
+    for (const v of [...new Set(b.map((l) => l[campo]))].sort())
+      el.add(new Option(v[0].toUpperCase() + v.slice(1), v));
     el.value = atual;
   }
+  leads = filtrar(b);
+  render(leads.length);
+}
+
+async function carregar() {
+  const d = await (await fetch('/api/leads')).json();
+  todos = d.leads;
   if (!$('#m-nicho').options.length) {
     for (const n of d.facetas.mineracao) $('#m-nicho').add(new Option(n.label, n.id));
     for (const u of d.facetas.estados) $('#m-uf').add(new Option(u, u));
     $('#m-uf').value = 'PR';
   }
-  render(d.total);
+  aplicar();
 }
 
 function render(total) {
@@ -320,36 +358,60 @@ $('#fechar').onclick = fechar; $('#ov').onclick = fechar;
 addEventListener('keydown', (e) => e.key === 'Escape' &&
   ($('#mov').classList.contains('open') ? $('#mfechar').click() : fechar()));
 
-const salvar = (cnpj, status) =>
-  fetch('/api/status', {method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({cnpj, status})});
+// grava no navegador (fonte da verdade) e avisa a API — que só persiste de fato rodando local
+const avisar = (rota, corpo) => fetch(rota, {method:'POST', headers:{'content-type':'application/json'},
+  body: JSON.stringify(corpo)}).catch(() => {});
 
-// ---- exclusão (com desfazer, nada some de verdade: vai pra tabela `descartados`) ----
+function salvar(cnpj, status) {
+  statusLocal[cnpj] = status;
+  LS.gravar('status', statusLocal);
+  return avisar('/api/status', {cnpj, status});
+}
+
+// ---- exclusão (com desfazer; nada é apagado, só marcado como descartado) ----
 let undoTimer;
-async function excluir(cnpjs) {
+function excluir(cnpjs) {
   if (!cnpjs.length) return;
-  const r = await fetch('/api/excluir', {method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({cnpjs})});
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok || d.excluidos === undefined) {      // 404 aqui = servidor rodando código antigo
-    $('#undo').innerHTML = `<span style="color:var(--alta)">Falha ao excluir (HTTP ${r.status}${d.erro ? ': ' + esc(d.erro) : ''}) — reinicie o servidor</span>`;
-    return void setTimeout(() => $('#undo').textContent = '', 8000);
-  }
+  cnpjs.forEach((c) => descartados.add(c));
+  LS.gravar('descartados', [...descartados]);
+  avisar('/api/excluir', {cnpjs});
   sel = new Set();
-  await carregar();
+  aplicar();
   clearTimeout(undoTimer);
-  $('#undo').innerHTML = `<span class="muted">${d.excluidos} excluído(s) — </span><a id="undo-a">desfazer</a>`;
-  $('#undo-a').onclick = async () => {
-    await fetch('/api/restaurar', {method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({cnpjs})});
-    $('#undo').textContent = ''; carregar();
+  $('#undo').innerHTML = `<span class="muted">${cnpjs.length} excluído(s) — </span><a id="undo-a">desfazer</a>`;
+  $('#undo-a').onclick = () => {
+    cnpjs.forEach((c) => descartados.delete(c));
+    LS.gravar('descartados', [...descartados]);
+    avisar('/api/restaurar', {cnpjs});
+    $('#undo').textContent = '';
+    aplicar();
   };
   undoTimer = setTimeout(() => $('#undo').textContent = '', 20000);
 }
-$('#del-lote').onclick = () => {
+// lote grande pede dois cliques: o desfazer some em 20s e um F5 no meio leva junto
+let armado;
+$('#del-lote').onclick = (e) => {
   if (!sel.size) { $('#undo').innerHTML = '<span class="muted">selecione leads na 1ª coluna</span>';
     return void setTimeout(() => $('#undo').textContent = '', 4000); }
+  if (sel.size > 3 && armado !== sel.size) {
+    armado = sel.size;
+    e.target.textContent = `⚠ Confirmar exclusão de ${sel.size}?`;
+    return void setTimeout(() => { armado = null; e.target.textContent = '🗑 Excluir selecionados'; }, 6000);
+  }
+  armado = null; e.target.textContent = '🗑 Excluir selecionados';
   excluir([...sel]);
+};
+
+// localStorage virou fonte da verdade (Vercel é stateless): precisa de uma saída pra zerar
+$('#reset').onclick = (e) => {
+  if (e.target.dataset.armado !== '1') {
+    e.target.dataset.armado = '1'; e.target.textContent = '⚠ Apagar status, minerados e exclusões?';
+    return void setTimeout(() => { e.target.dataset.armado = ''; e.target.textContent = '🧹 Limpar dados locais'; }, 6000);
+  }
+  ['status', 'minerados', 'descartados'].forEach(k => localStorage.removeItem('lr.' + k));
+  statusLocal = {}; minerados = []; descartados = new Set();
+  e.target.dataset.armado = ''; e.target.textContent = '🧹 Limpar dados locais';
+  carregar();
 };
 
 $('#tb').addEventListener('click', (e) => {
@@ -362,9 +424,9 @@ $('#tb').addEventListener('click', (e) => {
   const tr = e.target.closest('tr[data-i]');
   if (tr) raioX(leads[tr.dataset.i]);
 });
-$('#tb').addEventListener('change', async (e) => {
+$('#tb').addEventListener('change', (e) => {
   if (!e.target.matches('select.st')) return;
-  await salvar(e.target.dataset.cnpj, e.target.value);
+  salvar(e.target.dataset.cnpj, e.target.value);
   const l = leads.find(x => x.cnpj === e.target.dataset.cnpj); if (l) l.status = e.target.value;
 });
 $('#all').onchange = (e) => {
@@ -372,11 +434,11 @@ $('#all').onchange = (e) => {
   document.querySelectorAll('.ck').forEach(c => c.checked = e.target.checked);
   $('#sel').textContent = sel.size + ' selecionados';
 };
-$('#lote').onchange = async (e) => {
+$('#lote').onchange = (e) => {
   const s = e.target.value; e.target.value = '';
   if (!s || !sel.size) return;
-  await Promise.all([...sel].map(c => salvar(c, s)));
-  sel = new Set(); carregar();
+  [...sel].forEach(c => salvar(c, s));
+  sel = new Set(); aplicar();
 };
 // ---- mineração de leads reais ----
 const PASSOS = [
@@ -408,11 +470,16 @@ $('#m-go').onclick = async () => {
     if (!d.encontrados) return $('#modal').insertAdjacentHTML('beforeend',
       `<div class="err">Nenhuma empresa encontrada para <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
         <br><span class="muted">Confira a grafia exata do município (ex.: "São José dos Campos") e a UF, ou tente outro segmento.</span></div>`);
+    // guardados no navegador: na Vercel a instância morre e leva os minerados junto
+    const conhecidos = new Set([...minerados, ...todos].map(l => l.cnpj));
+    const adicionados = d.leads.filter(l => !conhecidos.has(l.cnpj) && !descartados.has(l.cnpj));
+    minerados = [...adicionados, ...minerados];
+    LS.gravar('minerados', minerados);
     $('#modal').insertAdjacentHTML('beforeend',
-      `<div class="ok">✓ ${d.novos} novas empresas reais mineradas com sucesso!
-        <br><span class="muted">${d.encontrados} encontradas · ${d.encontrados - d.novos} já estavam na base</span></div>`);
+      `<div class="ok">✓ ${adicionados.length} novas empresas reais mineradas com sucesso!
+        <br><span class="muted">${d.encontrados} encontradas · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span></div>`);
     $('#oferta').value = ''; $('#status').value = '';
-    await carregar();
+    aplicar();
     const novos = new Set(d.leads.map(l => l.cnpj));      // recém-minerados sobem pro topo desta visão
     leads.sort((a, b) => (novos.has(b.cnpj) ? 1 : 0) - (novos.has(a.cnpj) ? 1 : 0));
     render(leads.length);
@@ -425,10 +492,21 @@ $('#m-go').onclick = async () => {
   }
 };
 
-$('#exp').onclick = () => location.assign('/api/export.csv?' + params());
-$('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : ''); carregar(); };
-for (const f of F) $('#'+f).addEventListener(f === 'q' ? 'input' : 'change', debounce(carregar));
-function debounce(fn){ let t; return () => { clearTimeout(t); t = setTimeout(fn, 250); }; }
+// CSV montado aqui: o servidor não enxerga status nem leads minerados guardados no navegador.
+// `;` + BOM = abre direto no Excel PT-BR.
+const CSV_COLS = ['nome','razao_social','cnpj','nicho','cnae','cidade','uf','endereco','porte','anos',
+  'telefone','whatsapp','email','site','site_status','instagram','funcionarios',
+  'oferta_tag','score','prioridade','status','origem','gancho'];
+$('#exp').onclick = () => {
+  const linhas = [CSV_COLS.join(';'), ...leads.map(l =>
+    CSV_COLS.map(c => `"${String(l[c] ?? '').replaceAll('"','""')}"`).join(';'))];
+  const url = URL.createObjectURL(new Blob(['﻿' + linhas.join('\r\n')], {type:'text/csv;charset=utf-8'}));
+  const a = Object.assign(document.createElement('a'),
+    {href: url, download: `lead-radar-${new Date().toISOString().slice(0,10)}.csv`});
+  a.click(); URL.revokeObjectURL(url);
+};
+$('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : ''); aplicar(); };
+for (const f of F) $('#'+f).addEventListener(f === 'q' ? 'input' : 'change', aplicar);
 
 carregar();
 </script>

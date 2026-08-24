@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node test_score.mjs"
+    "test": "node test_score.mjs && node test_serverless.mjs"
   },
-  "engines": { "node": ">=22.5" }
+  "engines": { "node": ">=22" }
 }

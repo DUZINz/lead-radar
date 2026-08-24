@@ -2,5 +2,3 @@ leadradar.db
 *.log
 .vercel
 node_modules
-
-.vercel
