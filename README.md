@@ -67,7 +67,7 @@ importa, responde e não toca em disco).
 | `POST /api/restaurar` `{cnpjs:[...]}` | desfaz a exclusão |
 | `GET /api/lixeira` | o que foi descartado, com data |
 | `GET /api/export.csv?<mesmos filtros>` | CSV com BOM e `;` — abre direto no Excel PT-BR |
-| `POST /api/minerar` `{nicho,cidade,uf,quantidade}` | **mineração real** — ver abaixo |
+| `POST /api/minerar` `{nicho,cidade,uf,quantidade,apenas_whatsapp}` | **mineração real** — devolve `analisados` para mostrar o funil |
 | `GET /api/historico` | últimas 20 buscas |
 
 ## Mineração de leads reais
@@ -78,6 +78,10 @@ Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
    (`area[admin_level=8]` dentro de `area[admin_level=4]`, então cidade homônima em outro estado não entra).
    Traz nome, telefone, site, endereço, bairro e horário reais do cadastro público.
 2. **Ranking de contato** — quem tem telefone/site/endereço vem primeiro; busca 6× o pedido e corta no topo.
+   Com **📱 Apenas empresas com WhatsApp** (ligado por padrão) varre 10× e mantém só celular válido
+   (DDD + 9 dígitos começando em 9). Celular é tag rara no OSM: espere de 0 a 5 leads a cada 30-100
+   estabelecimentos analisados — a maioria publica só fixo. O modal mostra esse funil e sugere
+   desmarcar a opção quando o resultado vem vazio.
 3. **Verificador de site ao vivo** — `fetch` com timeout de 3s: `< 1s` = moderno, `< 2,5s` = lento,
    erro/HTTP ruim/timeout = defasado, DNS morto ou sem site = nenhum. Perfil de rede social **não** conta como site.
 4. **Scoring** — `enriquecer()` define oferta, prioridade, motivos e gancho.

@@ -97,6 +97,17 @@
   .err{background:rgba(255,92,122,.1);border:1px solid rgba(255,92,122,.4);color:var(--alta);
     border-radius:8px;padding:12px;font-size:13px;margin-top:18px}
   .rank{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12px}
+  /* WhatsApp: canal acionável, então ganha destaque próprio */
+  .wppbox{display:flex;gap:10px;align-items:flex-start;background:rgba(37,211,102,.08);
+    border:1px solid rgba(37,211,102,.35);border-radius:10px;padding:12px;margin-bottom:18px;
+    cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)}
+  .wppbox input{width:auto;margin-top:2px;accent-color:#25d366;flex:none}
+  .zap{display:inline-flex;align-items:center;gap:5px;background:rgba(37,211,102,.14);
+    border:1px solid rgba(37,211,102,.45);color:#25d366;border-radius:6px;padding:3px 8px;
+    font-size:12px;font-weight:600;white-space:nowrap}
+  .zap:hover{background:rgba(37,211,102,.26);text-decoration:none}
+  .badge-wpp{display:inline-block;background:rgba(37,211,102,.14);border:1px solid rgba(37,211,102,.45);
+    color:#25d366;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600}
   @media (max-width:700px){main{padding:14px}header{padding:14px}}
 </style>
 </head>
@@ -121,8 +132,13 @@
       <div><label>Cidade</label><input id="m-cidade" placeholder="Curitiba" value="Curitiba"></div>
       <div><label>Estado</label><select id="m-uf"></select></div>
     </div>
-    <div style="margin-bottom:18px"><label>Quantidade de leads</label><select id="m-qtd">
+    <div style="margin-bottom:14px"><label>Quantidade de leads</label><select id="m-qtd">
       <option>10</option><option selected>25</option><option>50</option></select></div>
+    <label for="m-wpp" class="wppbox">
+      <input type="checkbox" id="m-wpp" checked>
+      <span><b>📱 Apenas empresas com WhatsApp</b><br>
+        <span class="muted">ignora telefone fixo e sem contato — todo lead sai pronto pra disparo</span></span>
+    </label>
     <button class="primary" id="m-go" style="width:100%;padding:12px">Iniciar Mineração em Tempo Real</button>
     <p class="muted" style="margin:12px 0 0;font-size:11px">A busca leva de 15s a 90s: consulta a base pública,
       testa a velocidade de cada site e calcula as oportunidades.</p>
@@ -154,6 +170,10 @@
       <option value="web">⚡ Plataforma Web</option></select></div>
     <div><label>Prioridade</label><select id="prioridade"><option value="">Todas</option>
       <option>Alta</option><option>Média</option><option>Baixa</option></select></div>
+    <div><label>Canal de contato</label><select id="canal"><option value="">Todos</option>
+      <option value="whatsapp">📱 Apenas com WhatsApp</option>
+      <option value="site">🌐 Apenas com site</option>
+      <option value="sem-site">❌ Sem site</option></select></div>
     <div><label>Status prospecção</label><select id="status"><option value="">Todos</option>
       <option value="novo">Novo</option><option value="contatado">Contatado</option><option value="reuniao">Reunião</option>
       <option value="proposta">Proposta</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option>
@@ -192,7 +212,7 @@
 
 <script>
 const $ = (s) => document.querySelector(s);
-const F = ['q','nicho','uf','cidade','porte','anos','oferta','prioridade','status'];
+const F = ['q','nicho','uf','cidade','porte','anos','oferta','prioridade','status','canal'];
 const STATUS = {novo:'Novo',contatado:'Contatado',reuniao:'Reunião',proposta:'Proposta',ganho:'Ganho',perdido:'Perdido'};
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const zap = (n) => 'https://wa.me/55' + String(n).replace(/\D/g,'');
@@ -231,6 +251,7 @@ const filtrar = (lista) => {
     (!valor('oferta') || l.oferta === valor('oferta')) &&
     (!valor('prioridade') || l.prioridade === valor('prioridade')) &&
     (!valor('status') || l.status === valor('status')) &&
+    ({'': true, whatsapp: !!l.whatsapp, site: !!l.site, 'sem-site': !l.site }[valor('canal')] ?? true) &&
     // lead minerado não tem data de abertura (anos = null): nunca pode ser escondido por esse filtro
     (!anos || l.anos === null || l.anos >= anos) &&
     (!txt || [l.nome, l.razao_social, l.cidade, l.cnae, l.obs].join(' ').toLowerCase().includes(txt)))
@@ -287,7 +308,7 @@ function render(total) {
         <small>${l.origem === 'osm' ? esc(l.endereco || 'endereço n/d') : l.cnpj}
           · ${l.anos === null ? 'idade n/d' : l.anos + ' anos'} · ${l.porte}</small></td>
     <td><span class="pill">${esc(l.nicho)}</span><small class="web">${esc(l.cnae.split(' - ')[0])}</small></td>
-    <td class="web">${l.whatsapp ? `<a href="${zap(l.whatsapp)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a><br>` : ''}
+    <td class="web">${l.whatsapp ? `<a class="zap" href="${zap(l.whatsapp)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a><br>` : ''}
         ${l.telefone ? '☎ ' + esc(l.telefone) : '<span class="tag-nenhum">sem telefone</span>'}
         ${l.email ? `<br><a href="mailto:${esc(l.email)}">✉ ${esc(l.email)}</a>` : ''}</td>
     <td>${esc(l.cidade)}<small class="web">${l.uf}</small></td>
@@ -309,8 +330,10 @@ function raioX(l) {
   $('#dwc').innerHTML = `
     <h2>${esc(l.nome)}</h2>
     <div class="muted">${esc(l.razao_social)}</div>
-    <div style="margin-top:10px"><span class="pill">${esc(l.oferta_tag)}</span>
-      <span class="prio ${l.prioridade}" style="margin-left:8px">PRIORIDADE ${l.prioridade.toUpperCase()}</span></div>
+    <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <span class="pill">${esc(l.oferta_tag)}</span>
+      <span class="prio ${l.prioridade}">PRIORIDADE ${l.prioridade.toUpperCase()}</span>
+      ${l.whatsapp ? '<span class="badge-wpp">📱 WhatsApp Verificado</span>' : ''}</div>
 
     <h3>Cadastro</h3>
     <div class="kv">
@@ -328,7 +351,7 @@ function raioX(l) {
 
     <h3>Contato</h3>
     <div class="kv">
-      <span>WhatsApp</span><div>${l.whatsapp ? `<a href="${zap(l.whatsapp)}" target="_blank" rel="noopener">${l.whatsapp}</a>` : '—'}</div>
+      <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap" href="${zap(l.whatsapp)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
       <span>Telefone</span><div>${esc(l.telefone)}</div>
       <span>E-mail</span><div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>
       <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>${l.site_ms ? ` (${l.site_ms}ms medidos agora)` : ''}` : '<span class="tag-nenhum">não possui</span>'}</div>
@@ -465,7 +488,7 @@ $('#mov').onclick = (e) => e.target === $('#mov') && $('#mfechar').click();
 
 $('#m-go').onclick = async () => {
   const body = { nicho: $('#m-nicho').value, cidade: $('#m-cidade').value.trim(),
-    uf: $('#m-uf').value, quantidade: Number($('#m-qtd').value) };
+    uf: $('#m-uf').value, quantidade: Number($('#m-qtd').value), apenas_whatsapp: $('#m-wpp').checked };
   if (!body.cidade) return $('#m-cidade').focus();
   $('#mform').hidden = true; $('#mload').hidden = false;
   timers = PASSOS.map(([msg, sub, pct], i) => setTimeout(() => {
@@ -480,7 +503,9 @@ $('#m-go').onclick = async () => {
     $('#mload').hidden = true; $('#mform').hidden = false;
     if (!d.encontrados) return $('#modal').insertAdjacentHTML('beforeend',
       `<div class="err">Nenhuma empresa encontrada para <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
-        <br><span class="muted">Confira a grafia exata do município (ex.: "São José dos Campos") e a UF, ou tente outro segmento.</span></div>`);
+        <br><span class="muted">${d.apenas_whatsapp && d.analisados
+          ? `Analisei ${d.analisados} estabelecimentos e nenhum tem celular no cadastro público — a maioria só publica fixo. Desmarque "Apenas empresas com WhatsApp" para incluí-los.`
+          : 'Confira a grafia exata do município (ex.: "São José dos Campos") e a UF, ou tente outro segmento.'}</span></div>`);
     // guardados no navegador: na Vercel a instância morre e leva os minerados junto
     const conhecidos = new Set([...minerados, ...todos].map(l => l.cnpj));
     const adicionados = d.leads.filter(l => !conhecidos.has(l.cnpj) && !descartados.has(l.cnpj));
@@ -488,7 +513,7 @@ $('#m-go').onclick = async () => {
     LS.gravar('minerados', minerados);
     $('#modal').insertAdjacentHTML('beforeend',
       `<div class="ok">✓ ${adicionados.length} novas empresas reais mineradas com sucesso!
-        <br><span class="muted">${d.encontrados} encontradas · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span>
+        <br><span class="muted">${d.apenas_whatsapp ? `${d.analisados} estabelecimentos analisados · ${d.encontrados} com WhatsApp` : `${d.encontrados} encontradas`} · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span>
         <br><button class="primary" id="ver-leads" style="margin-top:10px">✓ Ver Leads Minerados na Tabela</button></div>`);
     $('#ver-leads').onclick = () => abrirModal(false);
     // limpa TODOS os filtros: um "porte: EPP" ou "1+ ano" esquecido esconde o lead recém-minerado

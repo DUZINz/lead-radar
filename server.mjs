@@ -174,7 +174,7 @@ const nomeCidade = (c) => /[^\x00-\x7F]/.test(c)
       return v ? `[${v}${v.toUpperCase()}]` : ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }).join('') + '$')}`;
 
-async function overpass(cat, cidade, uf, limite) {
+async function overpass(cat, cidade, uf, bruto) {
   // nome exato resolve em ~7s; a regex tolerante a acento custa 3-4x mais, então só entra se a exata falhar
   const tentativas = [`"name"=${JSON.stringify(cidade)}`];
   if (!/[^\x00-\x7F]/.test(cidade)) tentativas.push(nomeCidade(cidade));
@@ -185,7 +185,7 @@ async function overpass(cat, cidade, uf, limite) {
 area[admin_level=4]["name"=${JSON.stringify(UF_NOME[uf] ?? uf)}]->.uf;
 area[admin_level=8][${filtro}](area.uf)->.a;
 (${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
-out center tags ${Math.min(limite * 6, 400)};
+out center tags ${bruto};
 .a out tags;`;
     for (const url of OVERPASS) {
       try {
@@ -244,24 +244,28 @@ const formatarTel = (tel) => {
   return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
     : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : tel;
 };
+const telDe = (t) => t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile || '';
 const chaveLead = (l) => soDigitos(l.telefone) || soDigitos(l.whatsapp) || `${l.nome}|${l.cidade}`.toLowerCase();
 
-async function minerar({ nicho, cidade, uf, quantidade = 25 }) {
+async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = false }) {
   const cat = CATALOGO[nicho];
   if (!cat) throw new Error(`nicho inválido: ${nicho}`);
   if (!cidade || !uf) throw new Error('cidade e uf são obrigatórios');
   const limite = Math.min(Math.max(Number(quantidade) || 25, 1), 50);
+  // celular é tag rara no OSM: pra fechar a cota só com WhatsApp precisa varrer bem mais fundo
+  const bruto = apenas_whatsapp ? Math.min(limite * 10, 800) : Math.min(limite * 6, 400);
 
-  const brutos = await overpass(cat, cidade.trim(), uf.trim().toUpperCase(), limite);
+  const brutos = await overpass(cat, cidade.trim(), uf.trim().toUpperCase(), bruto);
   // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
   // uma cidade separada de "Florianópolis" na base
   const municipio = brutos.find((e) => e.type === 'area')?.tags?.name || cidade.trim();
 
-  const elementos = brutos
-    .filter((e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags))
+  const candidatos = brutos.filter((e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags));
+  const elementos = candidatos
+    .filter((e) => !apenas_whatsapp || ehCelular(telDe(e.tags)))
     // contato real primeiro: telefone > site > endereço
     .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags))
-    .slice(0, limite);
+    .slice(0, limite);                       // corta assim que fecha a cota pedida
 
   // Serverless: a memória da instância não é a base do usuário — deduplicar aqui esconderia
   // leads que o navegador dele nunca recebeu. Lá quem deduplica é o cliente (localStorage).
@@ -269,7 +273,7 @@ async function minerar({ nicho, cidade, uf, quantidade = 25 }) {
   const novos = [];
   const leads = await Promise.all(elementos.map(async (e) => {
     const t = e.tags;
-    const tel = t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile || '';
+    const tel = telDe(t);
     const site = await checarSite(t.website || t['contact:website'] || t.url || '');
     const endereco = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(', ');
     const bairro = t['addr:suburb'] || t['addr:neighbourhood'] || '';
@@ -319,7 +323,8 @@ async function minerar({ nicho, cidade, uf, quantidade = 25 }) {
     LEADS.unshift(l);
     novos.push(l);
   }
-  return { sucesso: true, encontrados: leads.length, novos: novos.length, leads: novos.map((l) => enriquecer(l)) };
+  return { sucesso: true, encontrados: leads.length, novos: novos.length, analisados: candidatos.length,
+    apenas_whatsapp, leads: novos.map((l) => enriquecer(l)) };
 }
 
 const pesoContato = (t = {}) =>
