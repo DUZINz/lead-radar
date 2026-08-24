@@ -1,6 +1,7 @@
 # Lead Radar
 
-Plataforma de inteligência e mineração de leads B2B — encontra e qualifica empresas
+Plataforma de inteligência e mineração de leads B2B — **base 100% real** (OpenStreetMap), sem dados fictícios.
+Encontra e qualifica empresas
 para venda de software sob medida, ERP enxuto, automação com IA, apps, APIs e plataformas web.
 
 **Zero dependências.** Só stdlib do Node (`node:http`, `node:sqlite`) + HTML/CSS/JS puro.
@@ -25,7 +26,7 @@ Ou conecte o repositório no painel da Vercel — não há build step, é zero-c
 - `public/` é servido como estático (é o output directory padrão quando existe).
 - `api/index.mjs` é a Serverless Function; o `rewrite` do `vercel.json` manda todo `/api/*` para ela,
   que apenas reexporta o handler de `server.mjs` — mesmo código do local, sem duplicação.
-- `includeFiles: leads.json` garante a base mock dentro do bundle da function.
+- `includeFiles: leads.json` mantém a semente (vazia) dentro do bundle da function.
 - `maxDuration: 60` porque a mineração leva de 7s a 30s (Overpass + teste de sites).
 
 **Persistência lá é outra:** o filesystem é read-only e cada invocação pode cair numa instância nova,
@@ -37,7 +38,7 @@ então `server.mjs` detecta `process.env.VERCEL` e troca o SQLite por um store v
 | Status de prospecção | SQLite + localStorage | localStorage |
 | Leads minerados | SQLite + localStorage | localStorage |
 | Leads descartados | SQLite + localStorage | localStorage |
-| Mock, scoring, mineração | stateless | stateless |
+| Scoring e mineração | stateless | stateless |
 
 Por isso o filtro, o CSV e os KPIs são calculados no cliente: o servidor não enxerga o que está no
 navegador. O botão **🧹 Limpar dados locais** zera esse estado.
@@ -52,7 +53,7 @@ importa, responde e não toca em disco).
 | `server.mjs` | handler HTTP + motor de scoring + mineração; servidor local ou function na Vercel |
 | `api/index.mjs` | Serverless Function da Vercel — reexporta o handler |
 | `vercel.json` | rewrite `/api/*` → function, `maxDuration`, `includeFiles` |
-| `leads.json` | Base minerada (33 empresas mock, 12 nichos, dados de CNPJ/CNAE/presença digital) |
+| `leads.json` | Semente vazia (`[]`) — a base é 100% real, vinda da mineração |
 | `public/index.html` | UI dark-tech completa (dashboard, tabela, filtros, Raio-X, exportação) |
 | `leadradar.db` | SQLite criado no primeiro run: status de prospecção + histórico de buscas |
 
@@ -79,16 +80,20 @@ Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
 2. **Ranking de contato** — quem tem telefone/site/endereço vem primeiro; busca 6× o pedido e corta no topo.
 3. **Verificador de site ao vivo** — `fetch` com timeout de 3s: `< 1s` = moderno, `< 2,5s` = lento,
    erro/HTTP ruim/timeout = defasado, DNS morto ou sem site = nenhum. Perfil de rede social **não** conta como site.
-4. **Scoring** — o mesmo `enriquecer()` dos mocks define oferta, prioridade e gancho.
+4. **Scoring** — `enriquecer()` define oferta, prioridade, motivos e gancho.
 5. **Persistência** — tabela `minerados` (chave = telefone, ou nome+cidade), sem duplicar, e os leads voltam
    para a memória no próximo boot.
 
 20 segmentos disponíveis (clínicas, odontologia, imobiliárias, advocacia, contabilidade, restaurantes,
 auto peças, oficinas, varejo, academias, escolas, hotéis, seguros…) × 27 UFs.
 
-Lead minerado não tem CNPJ/porte/abertura no cadastro público: `anos` fica `null`, `porte` = `N/D`
-e o filtro "1+ ano" o exclui. A prioridade Alta é alcançada por dois vetores fortes simultâneos,
-já que ele não expõe sistemas nem quadro interno.
+Órgão público (UBS, prefeitura, escola estadual, site `.gov.br`) é descartado na mineração — não é lead B2B.
+O município é gravado com o nome canônico do OSM, então digitar "Florianopolis" não cria uma cidade
+separada de "Florianópolis".
+
+Lead minerado não tem CNPJ/porte/abertura no cadastro público: `anos` fica `null` e `porte` = `N/D`.
+Filtro de idade nunca o esconde. A prioridade Alta vem de dois vetores fortes simultâneos, já que ele
+não expõe sistemas nem quadro interno.
 
 ## Motor de oportunidade
 

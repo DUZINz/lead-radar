@@ -208,6 +208,16 @@ let statusLocal = LS.ler('status', {});          // { cnpj: 'contatado' }
 let minerados  = LS.ler('minerados', []);        // leads reais já enriquecidos
 let descartados = new Set(LS.ler('descartados', []));
 
+// a base virou 100% real: joga fora qualquer resíduo dos mocks antigos (CNPJ real vs. id do OSM)
+const real = (cnpj) => String(cnpj).startsWith('OSM-');
+if (minerados.some(l => !real(l.cnpj)) || Object.keys(statusLocal).some(c => !real(c))) {
+  minerados = minerados.filter(l => real(l.cnpj));
+  statusLocal = Object.fromEntries(Object.entries(statusLocal).filter(([c]) => real(c)));
+  descartados = new Set([...descartados].filter(real));
+  LS.gravar('minerados', minerados); LS.gravar('status', statusLocal);
+  LS.gravar('descartados', [...descartados]);
+}
+
 const valor = (f) => $('#'+f).value;
 
 // filtro no cliente: o servidor não conhece os leads minerados nem os status guardados aqui
@@ -221,7 +231,8 @@ const filtrar = (lista) => {
     (!valor('oferta') || l.oferta === valor('oferta')) &&
     (!valor('prioridade') || l.prioridade === valor('prioridade')) &&
     (!valor('status') || l.status === valor('status')) &&
-    (l.anos ?? -1) >= anos &&
+    // lead minerado não tem data de abertura (anos = null): nunca pode ser escondido por esse filtro
+    (!anos || l.anos === null || l.anos >= anos) &&
     (!txt || [l.nome, l.razao_social, l.cidade, l.cnae, l.obs].join(' ').toLowerCase().includes(txt)))
     .sort((a, b) => b.score - a.score || b.score_total - a.score_total);
 };
@@ -477,8 +488,12 @@ $('#m-go').onclick = async () => {
     LS.gravar('minerados', minerados);
     $('#modal').insertAdjacentHTML('beforeend',
       `<div class="ok">✓ ${adicionados.length} novas empresas reais mineradas com sucesso!
-        <br><span class="muted">${d.encontrados} encontradas · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span></div>`);
-    $('#oferta').value = ''; $('#status').value = '';
+        <br><span class="muted">${d.encontrados} encontradas · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span>
+        <br><button class="primary" id="ver-leads" style="margin-top:10px">✓ Ver Leads Minerados na Tabela</button></div>`);
+    $('#ver-leads').onclick = () => abrirModal(false);
+    // limpa TODOS os filtros: um "porte: EPP" ou "1+ ano" esquecido esconde o lead recém-minerado
+    // (minerado não tem porte nem data de abertura no cadastro público)
+    F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : '');
     aplicar();
     const novos = new Set(d.leads.map(l => l.cnpj));      // recém-minerados sobem pro topo desta visão
     leads.sort((a, b) => (novos.has(b.cnpj) ? 1 : 0) - (novos.has(a.cnpj) ? 1 : 0));

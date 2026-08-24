@@ -25,9 +25,11 @@ db.exec(`
     cnpj TEXT PRIMARY KEY, nome TEXT, descartado_em TEXT NOT NULL);
 `);
 
-const LEADS = JSON.parse(await readFile(join(DIR, 'leads.json'), 'utf8'));
-// leads reais minerados em sessões anteriores voltam pra memória no boot
+// Base 100% real: sem mock. `leads.json` fica como semente opcional (vazia) e o que vale
+// são os leads minerados persistidos no SQLite — que voltam pra memória no boot.
+const LEADS = JSON.parse(await readFile(join(DIR, 'leads.json'), 'utf8').catch(() => '[]'));
 LEADS.unshift(...db.prepare('SELECT dados FROM minerados ORDER BY criado_em DESC').all().map((r) => JSON.parse(r.dados)));
+console.log(`base: ${LEADS.length} leads reais${SERVERLESS ? ' (serverless: estado vive no navegador)' : ''}`);
 
 // ---------------- motor de oportunidade ----------------
 
@@ -183,7 +185,8 @@ async function overpass(cat, cidade, uf, limite) {
 area[admin_level=4]["name"=${JSON.stringify(UF_NOME[uf] ?? uf)}]->.uf;
 area[admin_level=8][${filtro}](area.uf)->.a;
 (${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
-out center tags ${Math.min(limite * 6, 400)};`;
+out center tags ${Math.min(limite * 6, 400)};
+.a out tags;`;
     for (const url of OVERPASS) {
       try {
         const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA },
@@ -199,7 +202,8 @@ out center tags ${Math.min(limite * 6, 400)};`;
         }
         if (!r.ok) { erro = new Error(`Overpass ${r.status}`); continue; }
         const els = dados.elements ?? [];
-        if (els.length) return els;
+        // a área sempre volta (para pegar o nome canônico do município); só conta POI de verdade
+        if (els.some((e) => e.type !== 'area')) return els;
         erro = null;
         break;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
       } catch (e) { erro = e; }
@@ -228,6 +232,11 @@ async function checarSite(raw) {
   }
 }
 
+// órgão público não é lead B2B: unidade de saúde municipal, escola estadual, CRAS, prefeitura…
+const PUBLICO = /(unidade|posto|centro)\s+(b[áa]sica\s+)?de\s+sa[úu]de|^ubs\b|^upa\b|^cras\b|^caps\b|prefeitura|secretaria\s+(municipal|de\s+estado|de\s+sa[úu]de)|minist[ée]rio|governo\s+do\s+estado|hospital\s+(municipal|estadual|universit[áa]rio)|col[ée]gio\s+estadual|escola\s+(municipal|estadual)/i;
+const ehPublico = (t) => PUBLICO.test(t.name || '') || PUBLICO.test(t.operator || '') ||
+  t['operator:type'] === 'government' || /\.gov\.br/.test(t.website || t['contact:website'] || '');
+
 const soDigitos = (s) => String(s || '').replace(/\D/g, '');
 const ehCelular = (tel) => { const d = soDigitos(tel).replace(/^55/, ''); return d.length === 11 && d[2] === '9'; };
 const formatarTel = (tel) => {
@@ -243,13 +252,20 @@ async function minerar({ nicho, cidade, uf, quantidade = 25 }) {
   if (!cidade || !uf) throw new Error('cidade e uf são obrigatórios');
   const limite = Math.min(Math.max(Number(quantidade) || 25, 1), 50);
 
-  const elementos = (await overpass(cat, cidade.trim(), uf.trim().toUpperCase(), limite))
-    .filter((e) => e.tags?.name)
+  const brutos = await overpass(cat, cidade.trim(), uf.trim().toUpperCase(), limite);
+  // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
+  // uma cidade separada de "Florianópolis" na base
+  const municipio = brutos.find((e) => e.type === 'area')?.tags?.name || cidade.trim();
+
+  const elementos = brutos
+    .filter((e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags))
     // contato real primeiro: telefone > site > endereço
     .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags))
     .slice(0, limite);
 
-  const existentes = new Set(LEADS.map(chaveLead));
+  // Serverless: a memória da instância não é a base do usuário — deduplicar aqui esconderia
+  // leads que o navegador dele nunca recebeu. Lá quem deduplica é o cliente (localStorage).
+  const existentes = SERVERLESS ? new Set() : new Set(LEADS.map(chaveLead));
   const novos = [];
   const leads = await Promise.all(elementos.map(async (e) => {
     const t = e.tags;
@@ -263,7 +279,7 @@ async function minerar({ nicho, cidade, uf, quantidade = 25 }) {
       nome: t.name,
       nicho: cat.nicho,
       cnae: cat.label,
-      cidade: t['addr:city'] || cidade.trim(),
+      cidade: t['addr:city'] || municipio,
       uf: uf.trim().toUpperCase(),
       porte: 'N/D',
       abertura: null,
