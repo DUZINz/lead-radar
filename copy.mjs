@@ -9,7 +9,7 @@ export const VENDEDOR = {
 const { nome: EU, portfolio: PORT } = VENDEDOR;
 
 // blocos repetidos em todas as ofertas: prova (portfólio) e quebra de objeção (preço)
-const PROVA = `Deixo meu portfólio aqui — os painéis abrem no navegador e são de verdade, dá pra buscar, filtrar e cadastrar:\n${PORT}`;
+const PROVA = `Deixo meu portfólio aqui. São projetos-modelo que construí para demonstração — cada um feito do zero, no mesmo padrão do que entrego para cliente real. E não são imagens: os painéis abrem no navegador e funcionam mesmo, dá pra buscar, filtrar e cadastrar:\n${PORT}`;
 const PRECO = 'Se quiser, te mando aqui minha tabela de preços em PDF pra você dar uma olhada sem compromisso — trabalho com preço fechado, código próprio e sem mensalidade de plataforma.';
 
 const monta = (...blocos) => blocos.filter(Boolean).join('\n\n');
