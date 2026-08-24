@@ -51,6 +51,7 @@ importa, responde e não toca em disco).
 | Arquivo | O quê |
 |---|---|
 | `server.mjs` | handler HTTP + motor de scoring + mineração; servidor local ou function na Vercel |
+| `copy.mjs` | Copy comercial dos ganchos + portfólio do vendedor — edite aqui, não no motor |
 | `api/index.mjs` | Serverless Function da Vercel — reexporta o handler |
 | `vercel.json` | rewrite `/api/*` → function, `maxDuration`, `includeFiles` |
 | `leads.json` | Semente vazia (`[]`) — a base é 100% real, vinda da mineração |

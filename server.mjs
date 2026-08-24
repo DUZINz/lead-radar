@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
+import { GANCHOS } from './copy.mjs';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5173;
@@ -34,16 +35,11 @@ console.log(`base: ${LEADS.length} leads reais${SERVERLESS ? ' (serverless: esta
 // ---------------- motor de oportunidade ----------------
 
 const OFERTAS = {
-  erp:    { tag: '💡 Sistema de Gestão / ERP Enxuto',
-            gancho: (l) => `${l.sistemas.length ? `Vi que a ${l.nome} opera com ${l.sistemas.join(', ')}` : `Pelo que dá pra ver publicamente, a ${l.nome} não tem um sistema de gestão próprio`}. ${l.funcionarios ? `Em operação de ${l.funcionarios} pessoas${l.unidades > 1 ? ` e ${l.unidades} unidades` : ''} isso` : 'Isso'} costuma custar horas de retrabalho por semana. Montamos um sistema de gestão enxuto, só com o que vocês usam de verdade — sem pagar por módulo que ninguém abre. Faz sentido eu te mostrar em 15 min como ficaria o fluxo de vocês?` },
-  ia:     { tag: '🤖 Automação & Atendimento IA',
-            gancho: (l) => `A ${l.nome} tem volume de contato ${l.volume_atendimento} e atende ${l.whatsapp ? 'pelo WhatsApp' : 'por telefone e e-mail'}. ${l.obs} Dá pra colocar um agente de IA respondendo, qualificando e agendando 24h — e passando pro humano só o que vale. Te mostro rodando com o cenário de vocês?` },
-  mobile: { tag: '📱 Aplicativo Mobile / Área do Cliente',
-            gancho: (l) => `A ${l.nome} tem base recorrente${l.seguidores ? ` e ${l.seguidores.toLocaleString('pt-BR')} seguidores no Instagram` : ''}. Hoje o cliente precisa ligar ou mandar mensagem pra qualquer coisa. Uma área do cliente / app resolve 2ª via, agendamento e histórico sozinho. Posso te mandar um protótipo com a marca de vocês?` },
-  api:    { tag: '🔗 Integração de APIs / Migração de Dados',
-            gancho: (l) => `Contei ${l.sistemas.length} sistemas na ${l.nome}: ${l.sistemas.join(', ')}. Onde não tem integração, alguém está digitando o mesmo dado duas vezes. Fazemos a ponte via API e a migração sem parar a operação. Vale uma conversa de 15 min pra mapear onde está o retrabalho?` },
-  web:    { tag: '⚡ Plataforma Web / Redesign de Alta Performance',
-            gancho: (l) => `${l.site ? `O site da ${l.nome} está ${l.site_status} — e site lento/antigo derruba conversão e ranqueamento.` : `A ${l.nome} não tem site próprio, só ${l.instagram || 'telefone e WhatsApp'}.`} Entregamos uma plataforma rápida, indexável e com captação de lead integrada. Te mando um comparativo de velocidade do site atual?` },
+  erp:    { tag: '💡 Sistema de Gestão / ERP Enxuto',                  gancho: GANCHOS.erp },
+  ia:     { tag: '🤖 Automação & Atendimento IA',                      gancho: GANCHOS.ia },
+  mobile: { tag: '📱 Aplicativo Mobile / Área do Cliente',             gancho: GANCHOS.mobile },
+  api:    { tag: '🔗 Integração de APIs / Migração de Dados',          gancho: GANCHOS.api },
+  web:    { tag: '⚡ Plataforma Web / Redesign de Alta Performance',   gancho: GANCHOS.web },
 };
 
 const OP_NICHO = {
