@@ -106,6 +106,13 @@
     border:1px solid rgba(37,211,102,.45);color:#25d366;border-radius:6px;padding:3px 8px;
     font-size:12px;font-weight:600;white-space:nowrap}
   .zap:hover{background:rgba(37,211,102,.26);text-decoration:none}
+  #toast{position:fixed;top:74px;left:50%;transform:translate(-50%,-18px);z-index:80;
+    background:rgba(10,26,20,.97);border:1px solid rgba(37,211,102,.55);color:#25d366;
+    border-radius:10px;padding:12px 18px;font-size:13px;text-align:center;line-height:1.5;
+    box-shadow:0 16px 40px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;
+    max-width:min(520px,92vw)}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  #toast b{color:#3ef58c}
   .badge-wpp{display:inline-block;background:rgba(37,211,102,.14);border:1px solid rgba(37,211,102,.45);
     color:#25d366;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600}
   @media (max-width:700px){main{padding:14px}header{padding:14px}}
@@ -207,6 +214,7 @@
   </div>
 </main>
 
+<div id="toast"></div>
 <div id="ov"></div>
 <aside id="dw"><button class="close" id="fechar">✕</button><div id="dwc"></div></aside>
 
@@ -215,7 +223,8 @@ const $ = (s) => document.querySelector(s);
 const F = ['q','nicho','uf','cidade','porte','anos','oferta','prioridade','status','canal'];
 const STATUS = {novo:'Novo',contatado:'Contatado',reuniao:'Reunião',proposta:'Proposta',ganho:'Ganho',perdido:'Perdido'};
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const zap = (n) => 'https://wa.me/55' + String(n).replace(/\D/g,'');
+const zap = (num, texto) => 'https://wa.me/55' + String(num).replace(/\D/g,'') +
+  (texto ? '?text=' + encodeURIComponent(texto) : '');
 let leads = [], todos = [], sel = new Set();
 
 // Estado do usuário mora no navegador: na Vercel a função é stateless e efêmera, então
@@ -308,7 +317,7 @@ function render(total) {
         <small>${l.origem === 'osm' ? esc(l.endereco || 'endereço n/d') : l.cnpj}
           · ${l.anos === null ? 'idade n/d' : l.anos + ' anos'} · ${l.porte}</small></td>
     <td><span class="pill">${esc(l.nicho)}</span><small class="web">${esc(l.cnae.split(' - ')[0])}</small></td>
-    <td class="web">${l.whatsapp ? `<a class="zap" href="${zap(l.whatsapp)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a><br>` : ''}
+    <td class="web">${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener" title="Abre o WhatsApp com o gancho já escrito">📱 ${l.whatsapp}</a><br>` : ''}
         ${l.telefone ? '☎ ' + esc(l.telefone) : '<span class="tag-nenhum">sem telefone</span>'}
         ${l.email ? `<br><a href="mailto:${esc(l.email)}">✉ ${esc(l.email)}</a>` : ''}</td>
     <td>${esc(l.cidade)}<small class="web">${l.uf}</small></td>
@@ -351,7 +360,7 @@ function raioX(l) {
 
     <h3>Contato</h3>
     <div class="kv">
-      <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap" href="${zap(l.whatsapp)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
+      <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
       <span>Telefone</span><div>${esc(l.telefone)}</div>
       <span>E-mail</span><div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>
       <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>${l.site_ms ? ` (${l.site_ms}ms medidos agora)` : ''}` : '<span class="tag-nenhum">não possui</span>'}</div>
@@ -377,7 +386,7 @@ function raioX(l) {
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
       <button id="copiar">📋 Copiar script</button>
       <button id="excluir-lead">🗑 Excluir lead</button>
-      ${l.whatsapp ? `<button class="primary" onclick="window.open('${zap(l.whatsapp)}?text=' + encodeURIComponent(${JSON.stringify(l.gancho)}),'_blank')">Abrir WhatsApp</button>` : ''}
+      ${l.whatsapp ? `<a class="btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener" style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px">📱 Abrir WhatsApp com o gancho</a>` : ''}
     </div>`;
   $('#copiar').onclick = async (e) => {
     await navigator.clipboard.writeText(l.gancho);
@@ -391,6 +400,36 @@ const fechar = () => { $('#dw').classList.remove('open'); $('#ov').style.display
 $('#fechar').onclick = fechar; $('#ov').onclick = fechar;
 addEventListener('keydown', (e) => e.key === 'Escape' &&
   ($('#mov').classList.contains('open') ? $('#mfechar').click() : fechar()));
+
+// ---- clique no WhatsApp: abre com o gancho, copia como fallback e marca contatado ----
+let toastT;
+function toast(msg) {
+  $('#toast').innerHTML = msg;
+  $('#toast').classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => $('#toast').classList.remove('show'), 5000);
+}
+
+async function acionarZap(cnpj) {
+  const l = leads.find(x => x.cnpj === cnpj) || minerados.find(x => x.cnpj === cnpj);
+  if (!l) return;
+  // o link já navega sozinho; aqui vai o resto do trabalho
+  let copiou = true;
+  try { await navigator.clipboard.writeText(l.gancho); } catch { copiou = false; }
+  const marcou = (statusLocal[cnpj] ?? l.status) === 'novo';
+  if (marcou) {
+    salvar(cnpj, 'contatado');
+    l.status = 'contatado';
+    const sel = [...document.querySelectorAll('select.st')].find(s => s.dataset.cnpj === cnpj);
+    if (sel) sel.value = 'contatado';
+  }
+  toast(`✓ WhatsApp aberto com mensagem personalizada${marcou ? ' · Lead marcado como <b>Contatado</b>' : ''}!` +
+    (copiou ? '<br><span class="muted">Texto copiado — se o WhatsApp não preencher, é só colar.</span>' : ''));
+}
+document.addEventListener('click', (e) => {
+  const z = e.target.closest('.btn-zap-lead');
+  if (z) acionarZap(z.dataset.cnpj);
+});
 
 // grava no navegador (fonte da verdade) e avisa a API — que só persiste de fato rodando local
 const avisar = (rota, corpo) => fetch(rota, {method:'POST', headers:{'content-type':'application/json'},
@@ -454,7 +493,7 @@ $('#tb').addEventListener('click', (e) => {
     sel.has(e.target.dataset.cnpj) ? sel.delete(e.target.dataset.cnpj) : sel.add(e.target.dataset.cnpj);
     return void ($('#sel').textContent = sel.size + ' selecionados');
   }
-  if (e.target.closest('select')) return;
+  if (e.target.closest('select') || e.target.closest('.btn-zap-lead')) return;
   const tr = e.target.closest('tr[data-i]');
   if (tr) raioX(leads[tr.dataset.i]);
 });
