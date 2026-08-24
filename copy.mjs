@@ -14,6 +14,52 @@ const PRECO = 'Se quiser, te mando aqui minha tabela de preços em PDF pra você
 
 const monta = (...blocos) => blocos.filter(Boolean).join('\n\n');
 
+// Segunda mensagem: o que mandar quando o lead responde "pode mandar" / "quero ver".
+// Entrega o valor em 3 pontos concretos e termina oferecendo a tabela de preços.
+const FECHO_PRECO = 'Te mando a tabela de preços em PDF agora?';
+
+export const FOLLOWUPS = {
+  erp: (l) => monta(
+    `Fechado! Em 3 pontos, o que muda no dia a dia da ${l.nome}:`,
+    '*1. Um lugar só, em vez de sete*\nCadastro, agenda, serviço, pagamento e histórico na mesma tela. Acaba a caça ao arquivo certo e o "qual versão da planilha é a boa?".',
+    '*2. Você digita uma vez*\nO que entra no atendimento já aparece no financeiro e no relatório. Sem redigitar, sem erro de "faltou lançar".',
+    '*3. O número do mês na hora que você quiser*\nQuanto entrou, quanto está em aberto, quem é o cliente que mais volta. Hoje isso só existe depois que alguém senta e soma.',
+    'É feito sob medida com as etapas que vocês já usam — ninguém precisa mudar o jeito de trabalhar pra caber num sistema pronto. Roda no celular e no computador, e o treinamento da equipe entra junto.',
+    FECHO_PRECO),
+
+  ia: (l) => monta(
+    `Fechado! Em 3 pontos, o que muda no atendimento da ${l.nome}:`,
+    '*1. Resposta em segundos, 24h*\nMensagem de domingo à noite ou no meio do corre é respondida na hora, no tom de vocês. Quem pergunta preço às 22h não vai dormir esperando — e não fecha com o concorrente.',
+    '*2. Chega em você só quem vale*\nA IA tira as dúvidas repetidas (preço, horário, endereço, como funciona), entende o que a pessoa quer e só passa pra equipe quem está pronto pra fechar.',
+    '*3. Agendamento e registro automáticos*\nEla agenda, confirma, lembra no dia e deixa tudo registrado. Nada de "mandei mensagem e ninguém respondeu".',
+    'Ela é treinada com as suas informações e o seu jeito de falar — não é robô genérico de "digite 1". E você continua podendo assumir a conversa a qualquer momento.',
+    FECHO_PRECO),
+
+  mobile: (l) => monta(
+    `Fechado! Em 3 pontos, o que muda pra ${l.nome} e pros seus clientes:`,
+    '*1. O cliente se resolve sozinho*\nAgendar, remarcar, ver histórico, 2ª via, pagar. Sem ligar, sem esperar alguém abrir o WhatsApp.',
+    '*2. Ele volta sem você lembrar*\nAviso automático de retorno, vencimento e promoção direto no celular dele. É recompra que hoje se perde por esquecimento.',
+    '*3. Sua equipe para de ser telefonista*\nAs perguntas repetidas somem da rotina e sobra tempo pra atender bem quem está na sua frente.',
+    'Começa enxuto, com o que vocês mais usam, e cresce depois. Tudo com a sua marca — o cliente vê a sua empresa, não a de uma plataforma.',
+    FECHO_PRECO),
+
+  api: (l) => monta(
+    `Fechado! Em 3 pontos, o que muda na operação da ${l.nome}:`,
+    '*1. O dado é digitado uma vez só*\nO que entra num sistema aparece nos outros sozinho. Aquela hora diária de copiar de um lado pro outro deixa de existir.',
+    '*2. Os números passam a bater*\nEstoque, caixa e relatório saem da mesma fonte. Acaba a divergência que ninguém consegue explicar no fim do mês.',
+    '*3. Sem trocar o que já funciona*\nEu ligo as ferramentas que vocês já usam por API. Se algo precisar ser migrado, faço com a operação rodando — ninguém para um dia de trabalho.',
+    'Antes de qualquer coisa eu mapeio onde está o retrabalho hoje e te mostro o desenho: o que conversa com o quê e o que vai deixar de ser manual.',
+    FECHO_PRECO),
+
+  web: (l) => monta(
+    `Fechado! Em 3 pontos, o que muda pra ${l.nome}:`,
+    `*1. Ser achado por quem já está procurando*\nQuem pesquisa "${String(l.cnae || 'seu serviço').toLowerCase()} em ${l.cidade}" no Google hoje encontra o concorrente${l.site ? ' — e mesmo com site, um lento entra depois na fila do Google' : ', porque vocês não têm site'}. A página é preparada pros termos que as pessoas realmente digitam.`,
+    '*2. A página responde antes de você*\nServiços, valores, horário, fotos e depoimentos: é o que a pessoa quer saber antes de entrar em contato. Chega menos "quanto custa?" e mais gente já decidida.',
+    '*3. O contato cai organizado no seu WhatsApp*\nBotão de orçamento/agendamento que puxa nome, telefone e o que a pessoa quer. Você para de perder quem mandou mensagem de madrugada.',
+    'Abre em 1 a 2 segundos no celular, que é de onde quase todo mundo acessa. E é código próprio: sem mensalidade de construtor de site e sem ficar refém de plataforma.',
+    FECHO_PRECO),
+};
+
 export const GANCHOS = {
   erp: (l) => monta(
     `Oi! Tudo bem? Aqui é o ${EU}, desenvolvo sistemas de gestão sob medida.`,

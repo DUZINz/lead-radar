@@ -26,6 +26,9 @@ assert.equal(e({}).prioridade, 'Baixa');
 // enriquecimento básico
 const l = e({ sistemas: ['planilhas'], funcionarios: 40 });
 assert.ok(l.gancho.includes('X') && l.gancho.length > 80, 'gancho gerado');
+assert.ok(l.followup.includes('X') && l.followup.length > 200, 'follow-up gerado');
+assert.ok(l.gancho.includes('portfolio-murex-alpha-23.vercel.app'), 'portfólio na abordagem');
+assert.ok(/tabela de preços em PDF/.test(l.gancho) && /tabela de preços em PDF/.test(l.followup), 'oferta da tabela de preços');
 assert.ok(l.motivos.length >= 2 && l.ofertas[0].score >= l.ofertas.at(-1).score, 'motivos e ranking');
 assert.equal(l.anos, Math.floor((Date.now() - new Date('2015-01-01')) / 31557600000));
 assert.equal(l.status, 'novo');

@@ -383,14 +383,21 @@ function raioX(l) {
 
     <h3>Gancho de abordagem</h3>
     <div class="script">${esc(l.gancho)}</div>
+    <h3>Se ele responder "pode mandar"</h3>
+    <div class="script" style="border-left-color:var(--acc-2)">${esc(l.followup)}</div>
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-      <button id="copiar">📋 Copiar script</button>
+      <button id="copiar">📋 Copiar gancho</button>
+      <button id="copiar-fu">📋 Copiar follow-up</button>
       <button id="excluir-lead">🗑 Excluir lead</button>
       ${l.whatsapp ? `<a class="btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener" style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px">📱 Abrir WhatsApp com o gancho</a>` : ''}
     </div>`;
   $('#copiar').onclick = async (e) => {
     await navigator.clipboard.writeText(l.gancho);
     e.target.textContent = '✓ copiado';
+  };
+  $('#copiar-fu').onclick = async (e) => {
+    await navigator.clipboard.writeText(l.followup);
+    e.target.textContent = '✓ follow-up copiado';
   };
   $('#excluir-lead').onclick = () => { fechar(); excluir([l.cnpj]); };
   $('#dw').classList.add('open'); $('#ov').style.display = 'block';
