@@ -53,6 +53,9 @@ const LEGADO = /legado|antigo|própri[oa] antig/i;
 const DUPLO = /digitad|duas vezes|entre canais|conferid[oa] manualmente|sem integração/i;
 const BASE = /assinante|mensalista|aluno|apólice|contrato|cliente[s]? (ativo|fixo|recorrente)|carteira|2ª via/i;
 const VITRINE = ['imobiliario', 'varejo', 'turismo', 'alimentacao', 'construcao'];
+// site que está de pé: 'protegido' é Cloudflare/bot-protection barrando a medição, não site ruim.
+// Tratar como problema geraria a afirmação falsa "seu site está defasado" dentro do gancho.
+const SITE_OK = new Set(['moderno', 'protegido']);
 const CONVERSAO = /conversão|SEO|OTA|marketplace|catálogo|e-commerce|comissão|iFood|Booking|direct/i;
 
 function pontuar(l) {
@@ -89,8 +92,8 @@ function pontuar(l) {
       [l.site_status === 'lento', 25, 'Site lento (perde conversão e SEO)'],
       [!l.site && l.seguidores >= 5000, 15, 'Audiência grande sem casa própria'],
       [!l.site && !l.instagram && !l.email, 15, 'Presença digital nula — só telefone'],
-      [l.site_status !== 'moderno' && VITRINE.includes(l.nicho), 10, 'Nicho de vitrine — site é o canal de venda'],
-      [l.site_status !== 'moderno' && CONVERSAO.test(l.obs), 10, 'Depende de canal de terceiro / perde conversão'],
+      [!SITE_OK.has(l.site_status) && VITRINE.includes(l.nicho), 10, 'Nicho de vitrine — site é o canal de venda'],
+      [!SITE_OK.has(l.site_status) && CONVERSAO.test(l.obs), 10, 'Depende de canal de terceiro / perde conversão'],
     ],
   };
   return Object.entries(s).map(([id, regras]) => {
@@ -102,6 +105,12 @@ function pontuar(l) {
 }
 
 const anosAtivo = (abertura) => (Date.now() - new Date(abertura)) / 31557600000;
+
+// Limiares da prioridade Alta — faixa-alvo: 20-25% da base, e nunca a maioria dela.
+// Calibrado em 24/08/2026 sobre os 66 leads reais minerados (PR/SC/SP): dá 13/66 = 20%.
+// Se o perfil da base mudar (ex.: enriquecimento por CNPJ ligando os eixos erp/api), recalibre
+// AQUI — é o único lugar. `test_score.mjs` trava o contrato de "não é a maioria".
+const ALTA = { forte: 50, duplo: 40, eixo: 35 };
 
 export function enriquecer(l, status) {
   const ofertas = pontuar(l);
@@ -117,10 +126,13 @@ export function enriquecer(l, status) {
     score_total: total,
     motivos: top.motivos,
     ofertas,
-    // Alta = um sinal muito forte, ou dois vetores fortes ao mesmo tempo (caso comum em lead minerado,
-    // que não expõe sistemas/quadro interno e por isso nunca somaria 55 num único eixo)
-    prioridade: (anos === null || anos >= 1) &&
-      (top.score >= 55 || (top.score >= 45 && ofertas.filter((o) => o.score >= 40).length >= 2))
+    // Alta = acionável AGORA: WhatsApp válido + sinal forte (um eixo alto, ou dois vetores
+    // médios juntos — caso do lead minerado, que não expõe sistemas nem quadro interno).
+    // O filtro de canal é o que segura o percentual: sem celular não dá pra disparar, então é
+    // pesquisa, não lead quente. Sem ele, 48% da base saía Alta e a cor não significava nada.
+    prioridade: (anos === null || anos >= 1) && ehCelular(l.whatsapp) &&
+      (top.score >= ALTA.forte ||
+        (top.score >= ALTA.duplo && ofertas.filter((o) => o.score >= ALTA.eixo).length >= 2))
       ? 'Alta' : top.score >= 35 ? 'Média' : 'Baixa',
     gancho: OFERTAS[top.id].gancho(l),
     followup: FOLLOWUPS[top.id](l),        // 2a mensagem: quando o lead responde "pode mandar"
@@ -210,7 +222,12 @@ out center tags ${bruto};
   return [];
 }
 
-// mede o site de verdade: rapido = moderno, arrastado = lento, quebrado/timeout = defasado, DNS morto = nenhum
+// mede o site de verdade: rapido = moderno, arrastado = lento, quebrado/timeout = defasado,
+// DNS morto = nenhum, bloqueio de bot = protegido (existe e responde, só não deixa medir).
+// Duas tentativas: cold start de hospedagem compartilhada e blip de rede davam "defasado"
+// falso — e esse veredito vai escrito no gancho que o dono do site vai ler.
+const BLOQUEIO = new Set([401, 403, 405, 406, 429, 503]);
+
 async function checarSite(raw) {
   if (!raw) return { site: '', site_status: 'nenhum', site_ms: null };
   let u;
@@ -219,14 +236,22 @@ async function checarSite(raw) {
   // perfil de rede social não é site próprio — é justamente a dor que a oferta Web resolve
   if (/facebook|instagram|linktr|linkedin|wa\.me|beacons\.|bio\.link/.test(host))
     return { site: '', site_status: 'nenhum', site_ms: null, rede: u.href };
-  const t = Date.now();
-  try {
-    const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(3000), headers: { 'user-agent': UA } });
-    const ms = Date.now() - t;
-    return { site: host, site_ms: ms, site_status: !r.ok ? 'defasado' : ms < 1000 ? 'moderno' : ms < 2500 ? 'lento' : 'defasado' };
-  } catch (e) {
-    return { site: host, site_ms: null, site_status: e.name === 'TimeoutError' ? 'defasado' : 'nenhum' };
+
+  let ultimo = 'nenhum';
+  for (let tentativa = 0; tentativa < 2; tentativa++) {
+    const t = Date.now();
+    try {
+      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(3000), headers: { 'user-agent': UA } });
+      const ms = Date.now() - t;
+      // Cloudflare & cia: o site está de pé, só barrou o robô. Não dá pra chamar de defasado.
+      if (BLOQUEIO.has(r.status)) return { site: host, site_ms: null, site_status: 'protegido' };
+      if (r.ok) return { site: host, site_ms: ms, site_status: ms < 1000 ? 'moderno' : ms < 2500 ? 'lento' : 'defasado' };
+      ultimo = 'defasado';                 // 5xx/404: pode ser blip, tenta de novo antes de sentenciar
+    } catch (e) {
+      ultimo = e.name === 'TimeoutError' ? 'defasado' : 'nenhum';
+    }
   }
+  return { site: host, site_ms: null, site_status: ultimo };
 }
 
 // órgão público não é lead B2B: unidade de saúde municipal, escola estadual, CRAS, prefeitura…
@@ -244,13 +269,20 @@ const formatarTel = (tel) => {
 const telDe = (t) => t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile || '';
 const chaveLead = (l) => soDigitos(l.telefone) || soDigitos(l.whatsapp) || `${l.nome}|${l.cidade}`.toLowerCase();
 
-async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = false }) {
+async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = false, offset = 0 }) {
   const cat = CATALOGO[nicho];
   if (!cat) throw new Error(`nicho inválido: ${nicho}`);
   if (!cidade || !uf) throw new Error('cidade e uf são obrigatórios');
   const limite = Math.min(Math.max(Number(quantidade) || 25, 1), 50);
-  // celular é tag rara no OSM: pra fechar a cota só com WhatsApp precisa varrer bem mais fundo
-  const bruto = apenas_whatsapp ? Math.min(limite * 10, 800) : Math.min(limite * 6, 400);
+  // De onde continuar a varredura desta (nicho, cidade, uf, apenas_whatsapp). Sem isso, minerar
+  // a mesma busca de novo devolvia sempre o mesmo topo do ranking = "0 leads novos" pra sempre.
+  const inicio = Math.max(Number(offset) || 0, 0);
+  const alvo = inicio + limite;
+  // O teto de candidatos é FIXO, não proporcional à quantidade pedida: a fila precisa ser a mesma
+  // em todas as páginas, senão candidato novo entra na frente do cursor e o offset pula gente.
+  // Pedir mais no `out` do Overpass custa pouco — o caro é resolver a área e testar os sites,
+  // e o teste de site continua limitado a `limite`. (celular é tag rara: com WhatsApp varre o dobro)
+  const bruto = apenas_whatsapp ? 800 : 400;
 
   const brutos = await overpass(cat, cidade.trim(), uf.trim().toUpperCase(), bruto);
   // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
@@ -258,11 +290,12 @@ async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = f
   const municipio = brutos.find((e) => e.type === 'area')?.tags?.name || cidade.trim();
 
   const candidatos = brutos.filter((e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags));
-  const elementos = candidatos
-    .filter((e) => !apenas_whatsapp || ehCelular(telDe(e.tags)))
-    // contato real primeiro: telefone > site > endereço
-    .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags))
-    .slice(0, limite);                       // corta assim que fecha a cota pedida
+  const ranqueados = ranquear(candidatos, apenas_whatsapp);
+  const elementos = ranqueados.slice(inicio, alvo);     // a "página" pedida desta varredura
+  // ponytail: `bruto` limita o `out` do Overpass, então esgotado pode ser falso positivo quando
+  // a página bate exatamente no teto de 800. Só importa em cidade gigante — paginar no Overpass
+  // (por bbox) se um dia virar problema de verdade.
+  const esgotado = inicio + elementos.length >= ranqueados.length;
 
   // Serverless: a memória da instância não é a base do usuário — deduplicar aqui esconderia
   // leads que o navegador dele nunca recebeu. Lá quem deduplica é o cliente (localStorage).
@@ -305,7 +338,8 @@ async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = f
         !site.site && (site.rede ? `Sem site próprio — só perfil em rede social (${site.rede}).`
           : 'Sem site próprio localizado — só telefone/redes.'),
         site.site && site.site_ms && `Site ${site.site} respondeu em ${site.site_ms}ms.`,
-        site.site && !site.site_ms && `Site ${site.site} não respondeu (fora do ar ou timeout).`,
+        site.site_status === 'protegido' && `Site ${site.site} está de pé, mas bloqueia leitura automática (Cloudflare/anti-bot) — velocidade não medida.`,
+        site.site && !site.site_ms && site.site_status !== 'protegido' && `Site ${site.site} não respondeu em 2 tentativas (fora do ar ou timeout).`,
         !tel && 'Sem telefone público no cadastro.',
       ].filter(Boolean).join(' '),
     };
@@ -320,9 +354,20 @@ async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = f
     LEADS.unshift(l);
     novos.push(l);
   }
+  // proximo_offset volta pro cliente, que o guarda por busca e devolve na próxima mineração.
+  // Quando esgotou, zera: o OSM ganha POI novo com o tempo e a dedupe segura o repetido.
   return { sucesso: true, encontrados: leads.length, novos: novos.length, analisados: candidatos.length,
-    apenas_whatsapp, leads: novos.map((l) => enriquecer(l)) };
+    apenas_whatsapp, offset: inicio, proximo_offset: esgotado ? 0 : inicio + elementos.length,
+    esgotado, disponiveis: ranqueados.length, leads: novos.map((l) => enriquecer(l)) };
 }
+
+// Ordem estável da varredura: contato real primeiro (telefone > site > endereço), desempate por
+// id. O desempate não é cosmético — o offset só significa alguma coisa se duas execuções da mesma
+// busca produzirem exatamente a mesma fila. Exportado porque é o que o teste consegue checar
+// sem rede (o resto de `minerar` depende do Overpass).
+export const ranquear = (candidatos, apenas_whatsapp = false) => candidatos
+  .filter((e) => !apenas_whatsapp || ehCelular(telDe(e.tags)))
+  .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags) || a.id - b.id);
 
 const pesoContato = (t = {}) =>
   (t.phone || t['contact:phone'] || t.mobile ? 4 : 0) + (t.website || t['contact:website'] ? 2 : 0) +
@@ -343,7 +388,7 @@ function buscar(q) {
       (!q.get('oferta') || l.oferta === q.get('oferta')) &&
       (!q.get('prioridade') || l.prioridade === q.get('prioridade')) &&
       (!q.get('status') || l.status === q.get('status')) &&
-      l.anos >= Number(q.get('anos') || 0) &&
+      (!q.get('anos') || q.get('anos') === '0' || l.anos === null || l.anos >= Number(q.get('anos'))) &&
       (!txt || [l.nome, l.razao_social, l.cidade, l.cnae, l.obs].join(' ').toLowerCase().includes(txt)))
     .sort((a, b) => b.score - a.score || b.score_total - a.score_total);
 }

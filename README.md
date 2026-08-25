@@ -51,11 +51,11 @@ importa, responde e não toca em disco).
 | Arquivo | O quê |
 |---|---|
 | `server.mjs` | handler HTTP + motor de scoring + mineração; servidor local ou function na Vercel |
-| `copy.mjs` | Copy comercial dos ganchos + portfólio do vendedor — edite aqui, não no motor |
+| `copy.mjs` | Copy comercial: gancho curto (<250 chars) + follow-up com portfólio e preço — edite aqui, não no motor |
 | `api/index.mjs` | Serverless Function da Vercel — reexporta o handler |
 | `vercel.json` | rewrite `/api/*` → function, `maxDuration`, `includeFiles` |
 | `leads.json` | Semente vazia (`[]`) — a base é 100% real, vinda da mineração |
-| `public/index.html` | UI dark-tech completa (dashboard, tabela, filtros, Raio-X, exportação) |
+| `public/index.html` | UI dark-tech completa (dashboard, tabela, filtros, Raio-X, exportação); vira cards no mobile |
 | `leadradar.db` | SQLite criado no primeiro run: status de prospecção + histórico de buscas |
 
 ## API
@@ -68,7 +68,7 @@ importa, responde e não toca em disco).
 | `POST /api/restaurar` `{cnpjs:[...]}` | desfaz a exclusão |
 | `GET /api/lixeira` | o que foi descartado, com data |
 | `GET /api/export.csv?<mesmos filtros>` | CSV com BOM e `;` — abre direto no Excel PT-BR |
-| `POST /api/minerar` `{nicho,cidade,uf,quantidade,apenas_whatsapp}` | **mineração real** — devolve `analisados` para mostrar o funil |
+| `POST /api/minerar` `{nicho,cidade,uf,quantidade,apenas_whatsapp,offset}` | **mineração real** — devolve `analisados` (funil), `proximo_offset`, `esgotado` e `disponiveis` (paginação) |
 | `GET /api/historico` | últimas 20 buscas |
 
 ## Mineração de leads reais
@@ -78,15 +78,25 @@ Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
 1. **Overpass / OpenStreetMap** — busca estabelecimentos ativos por segmento dentro do município
    (`area[admin_level=8]` dentro de `area[admin_level=4]`, então cidade homônima em outro estado não entra).
    Traz nome, telefone, site, endereço, bairro e horário reais do cadastro público.
-2. **Ranking de contato** — quem tem telefone/site/endereço vem primeiro; busca 6× o pedido e corta no topo.
-   Com **📱 Apenas empresas com WhatsApp** (ligado por padrão) varre 10× e mantém só celular válido
+2. **Ranking de contato** — quem tem telefone/site/endereço vem primeiro, desempate por id do OSM.
+   O teto de candidatos é fixo (400, ou 800 com WhatsApp) justamente para a fila ser idêntica entre
+   duas execuções da mesma busca — é o que faz o offset significar alguma coisa.
+   Com **📱 Apenas empresas com WhatsApp** (ligado por padrão) mantém só celular válido
    (DDD + 9 dígitos começando em 9). Celular é tag rara no OSM: espere de 0 a 5 leads a cada 30-100
    estabelecimentos analisados — a maioria publica só fixo. O modal mostra esse funil e sugere
    desmarcar a opção quando o resultado vem vazio.
-3. **Verificador de site ao vivo** — `fetch` com timeout de 3s: `< 1s` = moderno, `< 2,5s` = lento,
-   erro/HTTP ruim/timeout = defasado, DNS morto ou sem site = nenhum. Perfil de rede social **não** conta como site.
-4. **Scoring** — `enriquecer()` define oferta, prioridade, motivos e gancho.
-5. **Persistência** — tabela `minerados` (chave = telefone, ou nome+cidade), sem duplicar, e os leads voltam
+3. **Paginação (offset)** — minerar a mesma cidade+segmento de novo continua da página seguinte em vez
+   de devolver sempre o mesmo topo do ranking. O cursor é do navegador (`lr.offsets`, por
+   `nicho|cidade|uf|apenas_whatsapp`): o servidor recebe `offset` e devolve `proximo_offset`,
+   `esgotado` e `disponiveis`. Quando a varredura fecha, o cursor zera e a próxima recomeça do
+   início — a deduplicação segura o que já está na base.
+4. **Verificador de site ao vivo** — `fetch` com timeout de 3s, **duas tentativas** antes de sentenciar:
+   `< 1s` = moderno, `< 2,5s` = lento, erro/timeout nas duas = defasado, DNS morto ou sem site = nenhum.
+   HTTP 401/403/405/406/429/503 = **protegido** (Cloudflare/anti-bot: o site está de pé, só não deixa medir)
+   — nunca vira "seu site está defasado" no gancho, e não pontua como site problemático.
+   Perfil de rede social **não** conta como site.
+5. **Scoring** — `enriquecer()` define oferta, prioridade, motivos e gancho.
+6. **Persistência** — tabela `minerados` (chave = telefone, ou nome+cidade), sem duplicar, e os leads voltam
    para a memória no próximo boot.
 
 20 segmentos disponíveis (clínicas, odontologia, imobiliárias, advocacia, contabilidade, restaurantes,
@@ -97,8 +107,8 @@ O município é gravado com o nome canônico do OSM, então digitar "Florianopol
 separada de "Florianópolis".
 
 Lead minerado não tem CNPJ/porte/abertura no cadastro público: `anos` fica `null` e `porte` = `N/D`.
-Filtro de idade nunca o esconde. A prioridade Alta vem de dois vetores fortes simultâneos, já que ele
-não expõe sistemas nem quadro interno.
+Filtro de idade nunca o esconde. A prioridade Alta exige WhatsApp válido mais dois vetores fortes
+simultâneos, já que ele não expõe sistemas nem quadro interno.
 
 ## Motor de oportunidade
 
@@ -112,8 +122,27 @@ Cada empresa é pontuada em 5 ofertas; a de maior score vira a tag sugerida e ge
 | 🔗 Integração de APIs / Migração | 3+ sistemas desconectados, stack fragmentada, legado |
 | ⚡ Plataforma Web / Redesign | sem site, site defasado ou lento, audiência sem casa própria |
 
-Prioridade: **Alta** = score ≥ 55, ou ≥ 45 com duas ofertas ≥ 40 (e empresa com 1+ ano, quando a idade é
-conhecida) · **Média** = score ≥ 35 · **Baixa** = resto.
+Prioridade: **Alta** = **WhatsApp válido** (celular, não fixo) **+** empresa com 1+ ano (quando a idade é
+conhecida) **+** score ≥ 50, ou ≥ 40 com duas ofertas ≥ 35 · **Média** = score ≥ 35 · **Baixa** = resto.
+
+O gate de canal é o que segura a faixa: Alta significa *acionável agora*, não "interessante". Sem celular
+não dá pra disparar, então é pesquisa. Os limiares vivem em `const ALTA` no `server.mjs` — **um lugar só**.
+Calibrados sobre a base real minerada para ficar em **~20%** (antes eram 48%, metade da lista vermelha).
+Recalibre ali se o perfil da base mudar; `test_score.mjs` trava o contrato "sem WhatsApp não é Alta".
+
+## Abordagem: 1ª mensagem curta, prova na 2ª
+
+O **gancho** (`GANCHOS` em `copy.mjs`) é o que vai no `?text=` do WhatsApp e tem 3 blocos, **< 250
+caracteres**: apresentação, uma observação concreta sobre o negócio dele, e uma pergunta aberta.
+Sem link, sem tabela de preços, sem pitch — mil caracteres com link na primeira mensagem para um
+estranho é bloqueio (e risco de ban do número).
+
+Portfólio e tabela de preços vivem no **follow-up** (`FOLLOWUPS`), a segunda mensagem, enviada quando
+o lead responde. O limite de 250 e a ausência de link/preço são testados em `test_score.mjs`.
+
+O `name` do OSM vem com emoji e keyword stuffing de SEO local
+(`👨‍⚕️ Dr Carlos Dalmaso | Telemedicina - Check up | Clínico Geral em Curitiba`, 90 chars). A função
+`curto()` limpa isso antes de escrever qualquer mensagem — copiar o cadastro cru denuncia disparo automático.
 
 ## Exclusão de leads
 

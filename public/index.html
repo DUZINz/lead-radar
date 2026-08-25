@@ -59,6 +59,13 @@
   .off{font-size:12px;line-height:1.35;max-width:250px;display:block}
   .web{font-size:11px;color:var(--dim);line-height:1.6}
   .tag-nenhum{color:var(--alta)} .tag-defasado{color:var(--media)} .tag-lento{color:var(--media)}
+  .tag-protegido{color:var(--dim)}   /* site de pé, só não deixou medir — não é defeito dele */
+  /* lead sem celular não dá pra acionar daqui: continua na lista, mas para de competir por atenção */
+  tbody tr.nowpp{opacity:.5}
+  tbody tr.nowpp:hover{opacity:1}
+  /* coluna dedicada: o WhatsApp é A ação do produto, não mais um campo de contato */
+  td.zapcol,th.zapcol{border-left:1px solid var(--line);background:rgba(37,211,102,.04);text-align:center}
+  td.zapcol .zap{padding:7px 12px;font-size:13px}
   select.st{padding:5px 7px;font-size:11px;width:auto}
   .del{padding:4px 8px;background:transparent;border-color:transparent;filter:grayscale(1);opacity:.5}
   tbody tr:hover .del{opacity:1;filter:none}
@@ -115,7 +122,40 @@
   #toast b{color:#3ef58c}
   .badge-wpp{display:inline-block;background:rgba(37,211,102,.14);border:1px solid rgba(37,211,102,.45);
     color:#25d366;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600}
-  @media (max-width:700px){main{padding:14px}header{padding:14px}}
+  /* ---- mobile: a tabela de 1150px vira cards ----
+     Mesmo DOM e mesmo JS — só o layout muda. Prospecção acontece no celular, com o polegar,
+     com o WhatsApp na mão: o card mostra só o que decide (quem, onde, qual oferta, status)
+     e um botão verde grande. O resto do cadastro está a um toque, no Raio-X. */
+  @media (max-width:900px){
+    main{padding:14px} header{padding:14px}
+    .tablewrap{border:0;background:none;overflow:visible}
+    table{min-width:0;width:100%}
+    thead{display:none}
+    table,tbody,tr,td{display:block}
+    tbody tr{position:relative;background:var(--panel);border:1px solid var(--line);
+      border-radius:14px;padding:14px 14px 12px;margin-bottom:12px}
+    tbody tr:hover{background:var(--panel)}
+    tbody tr.nowpp{opacity:.6}
+    td{border:0;padding:0}
+    td.ck-td,td.contato,td.pres{display:none}       /* contato completo mora no Raio-X */
+    td.co{font-size:16px;padding-right:76px}
+    td.seg,td.cid{display:inline-block;margin:9px 8px 0 0;vertical-align:top}
+    td.cid{font-size:12px;color:var(--dim)} td.cid small{display:inline}
+    td.opo{margin-top:11px} td.opo .off{max-width:none} td.opo .bar{width:100%}
+    td.prio-td{position:absolute;top:15px;right:40px}
+    td.st-td{margin-top:12px}
+    td.st-td select.st{width:100%;padding:10px;font-size:13px}
+    td.del-td{position:absolute;top:9px;right:8px}
+    td.del-td .del{opacity:1;filter:none}
+    td.zapcol{border:0;background:none;margin-top:10px;text-align:left}
+    td.zapcol .zap{display:flex;justify-content:center;background:#25d366;border-color:#25d366;
+      color:#04140e;font-size:15px;font-weight:700;padding:14px;border-radius:10px}
+    td.zapcol .zap:hover{background:#25d366}
+    .semzap{display:block;text-align:center;font-size:12px;color:var(--dim);
+      border:1px dashed var(--line);border-radius:10px;padding:12px}
+    tbody tr.vazio{padding:26px;text-align:center}
+  }
+  .semzap{color:var(--dim);font-size:11px}
 </style>
 </head>
 <body>
@@ -207,7 +247,8 @@
       <thead><tr>
         <th><input type="checkbox" id="all" style="width:auto"></th>
         <th>Empresa</th><th>Segmento</th><th>Contato</th><th>Cidade</th>
-        <th>Presença digital</th><th>Oportunidade sugerida</th><th>Prior.</th><th>Status</th><th></th>
+        <th>Presença digital</th><th>Oportunidade sugerida</th><th>Prior.</th><th>Status</th>
+        <th class="zapcol">Acionar</th><th></th>
       </tr></thead>
       <tbody id="tb"></tbody>
     </table>
@@ -236,6 +277,10 @@ const LS = {
 let statusLocal = LS.ler('status', {});          // { cnpj: 'contatado' }
 let minerados  = LS.ler('minerados', []);        // leads reais já enriquecidos
 let descartados = new Set(LS.ler('descartados', []));
+// Onde parou a varredura de cada busca: { 'clinicas|curitiba|PR|1': 25 }. O servidor é stateless
+// (na Vercel, obrigatoriamente), então quem lembra a página é o navegador — igual ao resto do estado.
+let offsets = LS.ler('offsets', {});
+const chaveBusca = (b) => [b.nicho, b.cidade.toLowerCase(), b.uf, b.apenas_whatsapp ? 1 : 0].join('|');
 
 // a base virou 100% real: joga fora qualquer resíduo dos mocks antigos (CNPJ real vs. id do OSM)
 const real = (cnpj) => String(cnpj).startsWith('OSM-');
@@ -310,27 +355,31 @@ function render(total) {
   ].map(([k, v]) => `<div class="kpi"><b>${v}</b><span>${k}</span></div>`).join('');
   $('#resumo').textContent = `${total} empresas mineradas · ${alta} com prioridade alta`;
 
-  $('#tb').innerHTML = leads.map((l, i) => `<tr data-i="${i}">
-    <td><input type="checkbox" class="ck" data-cnpj="${l.cnpj}" style="width:auto" ${sel.has(l.cnpj)?'checked':''}></td>
+  // classes nos <td>: no desktop são só colunas, no mobile são as peças do card (ver @media)
+  $('#tb').innerHTML = leads.map((l, i) => `<tr data-i="${i}" class="${l.whatsapp ? '' : 'nowpp'}">
+    <td class="ck-td"><input type="checkbox" class="ck" data-cnpj="${l.cnpj}" style="width:auto" ${sel.has(l.cnpj)?'checked':''}></td>
     <td class="co">${esc(l.nome)} ${l.origem === 'osm' ? '<span class="real">REAL</span>' : ''}
         <small>${esc(l.razao_social)}</small>
         <small>${l.origem === 'osm' ? esc(l.endereco || 'endereço n/d') : l.cnpj}
           · ${l.anos === null ? 'idade n/d' : l.anos + ' anos'} · ${l.porte}</small></td>
-    <td><span class="pill">${esc(l.nicho)}</span><small class="web">${esc(l.cnae.split(' - ')[0])}</small></td>
-    <td class="web">${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener" title="Abre o WhatsApp com o gancho já escrito">📱 ${l.whatsapp}</a><br>` : ''}
-        ${l.telefone ? '☎ ' + esc(l.telefone) : '<span class="tag-nenhum">sem telefone</span>'}
+    <td class="seg"><span class="pill">${esc(l.nicho)}</span><small class="web">${esc(l.cnae.split(' - ')[0])}</small></td>
+    <td class="contato web">${l.telefone ? '☎ ' + esc(l.telefone) : '<span class="tag-nenhum">sem telefone</span>'}
         ${l.email ? `<br><a href="mailto:${esc(l.email)}">✉ ${esc(l.email)}</a>` : ''}</td>
-    <td>${esc(l.cidade)}<small class="web">${l.uf}</small></td>
-    <td class="web">${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">🌐 ${esc(l.site)}</a>
+    <td class="cid">${esc(l.cidade)}<small class="web">${l.uf}</small></td>
+    <td class="pres web">${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">🌐 ${esc(l.site)}</a>
         <br><span class="tag-${l.site_status}">site ${l.site_status}</span>` : '<span class="tag-nenhum">sem site</span>'}
         ${l.instagram ? `<br>📷 ${esc(l.instagram)} (${l.seguidores.toLocaleString('pt-BR')})` : ''}</td>
-    <td><span class="off">${esc(l.oferta_tag)}</span><div class="bar"><i style="width:${Math.min(100,l.score)}%"></i></div>
+    <td class="opo"><span class="off">${esc(l.oferta_tag)}</span><div class="bar"><i style="width:${Math.min(100,l.score)}%"></i></div>
         <small class="web">score ${l.score}</small></td>
-    <td><span class="prio ${l.prioridade}">${l.prioridade}</span></td>
-    <td><select class="st" data-cnpj="${l.cnpj}">${Object.entries(STATUS)
+    <td class="prio-td"><span class="prio ${l.prioridade}">${l.prioridade}</span></td>
+    <td class="st-td"><select class="st" data-cnpj="${l.cnpj}">${Object.entries(STATUS)
         .map(([v, t]) => `<option value="${v}" ${l.status===v?'selected':''}>${t}</option>`).join('')}</select></td>
-    <td><button class="del" data-cnpj="${l.cnpj}" title="Excluir este lead da base">🗑</button></td>
-  </tr>`).join('') || `<tr><td colspan="10" style="padding:30px;text-align:center" class="muted">
+    <td class="zapcol">${l.whatsapp
+      ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener"
+           title="Abre o WhatsApp com o gancho já escrito">📱 ${l.whatsapp}</a>`
+      : '<span class="semzap">sem WhatsApp</span>'}</td>
+    <td class="del-td"><button class="del" data-cnpj="${l.cnpj}" title="Excluir este lead da base">🗑</button></td>
+  </tr>`).join('') || `<tr class="vazio"><td colspan="11" style="padding:30px;text-align:center" class="muted">
       Nenhuma empresa bate com esses filtros.</td></tr>`;
   $('#sel').textContent = sel.size + ' selecionados';
 }
@@ -363,7 +412,10 @@ function raioX(l) {
       <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
       <span>Telefone</span><div>${esc(l.telefone)}</div>
       <span>E-mail</span><div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>
-      <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>${l.site_ms ? ` (${l.site_ms}ms medidos agora)` : ''}` : '<span class="tag-nenhum">não possui</span>'}</div>
+      <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>${
+        l.site_ms ? ` (${l.site_ms}ms medidos agora)`
+        : l.site_status === 'protegido' ? ' (bloqueia leitura automática — velocidade não medida)'
+        : ' (sem resposta em 2 tentativas)'}` : '<span class="tag-nenhum">não possui</span>'}</div>
       <span>Instagram</span><div>${l.instagram ? `${esc(l.instagram)} · ${l.seguidores.toLocaleString('pt-BR')} seguidores` : '—'}</div>
     </div>
 
@@ -488,8 +540,8 @@ $('#reset').onclick = (e) => {
     e.target.dataset.armado = '1'; e.target.textContent = '⚠ Apagar status, minerados e exclusões?';
     return void setTimeout(() => { e.target.dataset.armado = ''; e.target.textContent = '🧹 Limpar dados locais'; }, 6000);
   }
-  ['status', 'minerados', 'descartados'].forEach(k => localStorage.removeItem('lr.' + k));
-  statusLocal = {}; minerados = []; descartados = new Set();
+  ['status', 'minerados', 'descartados', 'offsets'].forEach(k => localStorage.removeItem('lr.' + k));
+  statusLocal = {}; minerados = []; descartados = new Set(); offsets = {};
   e.target.dataset.armado = ''; e.target.textContent = '🧹 Limpar dados locais';
   carregar();
 };
@@ -536,6 +588,8 @@ $('#m-go').onclick = async () => {
   const body = { nicho: $('#m-nicho').value, cidade: $('#m-cidade').value.trim(),
     uf: $('#m-uf').value, quantidade: Number($('#m-qtd').value), apenas_whatsapp: $('#m-wpp').checked };
   if (!body.cidade) return $('#m-cidade').focus();
+  const kBusca = chaveBusca(body);
+  body.offset = offsets[kBusca] ?? 0;      // continua de onde parou nesta mesma busca
   $('#mform').hidden = true; $('#mload').hidden = false;
   timers = PASSOS.map(([msg, sub, pct], i) => setTimeout(() => {
     $('#mmsg').textContent = msg; $('#msub').textContent = sub; $('#mbar').style.width = pct + '%';
@@ -547,11 +601,17 @@ $('#m-go').onclick = async () => {
     if (!r.ok || d.erro) throw new Error(d.erro || 'falha na mineração');
     $('#mbar').style.width = '100%';
     $('#mload').hidden = true; $('#mform').hidden = false;
+    // avança (ou zera, quando o servidor diz que a varredura fechou) o cursor desta busca
+    offsets[kBusca] = d.proximo_offset ?? 0;
+    LS.gravar('offsets', offsets);
     if (!d.encontrados) return $('#modal').insertAdjacentHTML('beforeend',
-      `<div class="err">Nenhuma empresa encontrada para <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
-        <br><span class="muted">${d.apenas_whatsapp && d.analisados
-          ? `Analisei ${d.analisados} estabelecimentos e nenhum tem celular no cadastro público — a maioria só publica fixo. Desmarque "Apenas empresas com WhatsApp" para incluí-los.`
-          : 'Confira a grafia exata do município (ex.: "São José dos Campos") e a UF, ou tente outro segmento.'}</span></div>`);
+      `<div class="err">${body.offset
+        ? `Fim da fila: você já varreu os ${d.disponiveis} estabelecimentos de <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
+           <br><span class="muted">Na próxima vez a varredura recomeça do início (o que já está na base não repete). Pra achar leads novos agora, troque de segmento ou de cidade.</span>`
+        : `Nenhuma empresa encontrada para <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
+           <br><span class="muted">${d.apenas_whatsapp && d.analisados
+             ? `Analisei ${d.analisados} estabelecimentos e nenhum tem celular no cadastro público — a maioria só publica fixo. Desmarque "Apenas empresas com WhatsApp" para incluí-los.`
+             : 'Confira a grafia exata do município (ex.: "São José dos Campos") e a UF, ou tente outro segmento.'}</span>`}</div>`);
     // guardados no navegador: na Vercel a instância morre e leva os minerados junto
     const conhecidos = new Set([...minerados, ...todos].map(l => l.cnpj));
     const adicionados = d.leads.filter(l => !conhecidos.has(l.cnpj) && !descartados.has(l.cnpj));
@@ -560,6 +620,9 @@ $('#m-go').onclick = async () => {
     $('#modal').insertAdjacentHTML('beforeend',
       `<div class="ok">✓ ${adicionados.length} novas empresas reais mineradas com sucesso!
         <br><span class="muted">${d.apenas_whatsapp ? `${d.analisados} estabelecimentos analisados · ${d.encontrados} com WhatsApp` : `${d.encontrados} encontradas`} · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span>
+        <br><span class="muted">${d.esgotado
+          ? `Varredura completa nesse segmento/cidade (${d.disponiveis} estabelecimentos) — a próxima recomeça do início.`
+          : `Minerados ${d.offset + 1}–${d.offset + d.encontrados} de ${d.disponiveis}. Clique de novo pra continuar da próxima página.`}</span>
         <br><button class="primary" id="ver-leads" style="margin-top:10px">✓ Ver Leads Minerados na Tabela</button></div>`);
     $('#ver-leads').onclick = () => abrirModal(false);
     // limpa TODOS os filtros: um "porte: EPP" ou "1+ ano" esquecido esconde o lead recém-minerado
