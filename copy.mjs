@@ -15,7 +15,7 @@ const PRECO = 'Se quiser, te mando aqui minha tabela de preços em PDF pra você
 const monta = (...blocos) => blocos.filter(Boolean).join('\n\n');
 
 // O campo `name` do OSM vem com emoji e keyword stuffing de SEO local:
-// "👨‍⚕️ Dr Carlos Dalmaso | Telemedicina - Check up | Clínico Geral em Curitiba" (90 chars).
+// "👨‍⚕️ Dr Carlos Dalmaso | Telemedicina - Check up | Clínico Geral em Curitiba" (90 chars). 
 // Escrever isso numa mensagem denuncia disparo automático — e estoura o limite de 250.
 const curto = (nome) => {
   const n = String(nome ?? '')
