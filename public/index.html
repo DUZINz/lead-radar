@@ -182,9 +182,9 @@
     <div style="margin-bottom:14px"><label>Quantidade de leads</label><select id="m-qtd">
       <option>10</option><option selected>25</option><option>50</option></select></div>
     <label for="m-wpp" class="wppbox">
-      <input type="checkbox" id="m-wpp" checked>
+      <input type="checkbox" id="m-wpp">
       <span><b>📱 Apenas empresas com WhatsApp</b><br>
-        <span class="muted">ignora telefone fixo e sem contato — todo lead sai pronto pra disparo</span></span>
+        <span class="muted">ignora telefone fixo e sem contato. Desmarcado, traz também quem só tem fixo — nem toda empresa publica celular</span></span>
     </label>
     <button class="primary" id="m-go" style="width:100%;padding:12px">Iniciar Mineração em Tempo Real</button>
     <p class="muted" style="margin:12px 0 0;font-size:11px">A busca leva de 15s a 90s: consulta a base pública,
@@ -579,7 +579,7 @@ const PASSOS = [
   ['💡 Calculando oportunidades e ganchos comerciais…', 'aplicando o motor de scoring em cada empresa', 85],
 ];
 let timers = [];
-const abrirModal = (v) => { $('#mov').classList.toggle('open', v); if (v) { $('#mform').hidden = false; $('#mload').hidden = true; document.querySelectorAll('#modal .ok,#modal .err').forEach(e => e.remove()); } };
+const abrirModal = (v) => { $('#mov').classList.toggle('open', v); if (v) { $('#m-wpp').checked = LS.ler('so_wpp', false); $('#mform').hidden = false; $('#mload').hidden = true; document.querySelectorAll('#modal .ok,#modal .err').forEach(e => e.remove()); } };
 $('#btn-minerar').onclick = () => abrirModal(true);
 $('#mfechar').onclick = () => { abrirModal(false); timers.forEach(clearTimeout); };
 $('#mov').onclick = (e) => e.target === $('#mov') && $('#mfechar').click();
@@ -587,6 +587,7 @@ $('#mov').onclick = (e) => e.target === $('#mov') && $('#mfechar').click();
 $('#m-go').onclick = async () => {
   const body = { nicho: $('#m-nicho').value, cidade: $('#m-cidade').value.trim(),
     uf: $('#m-uf').value, quantidade: Number($('#m-qtd').value), apenas_whatsapp: $('#m-wpp').checked };
+  LS.gravar('so_wpp', body.apenas_whatsapp);   // a escolha vale pras próximas minerações
   if (!body.cidade) return $('#m-cidade').focus();
   const kBusca = chaveBusca(body);
   body.offset = offsets[kBusca] ?? 0;      // continua de onde parou nesta mesma busca
