@@ -36,6 +36,8 @@
   select,input,textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--txt);
     border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
   select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+  select[multiple]{padding:4px;height:auto}
+  select[multiple] option{padding:5px 7px;border-radius:5px}
   .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
   button{background:var(--panel-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
     padding:8px 14px;font:inherit;font-size:13px;cursor:pointer}
@@ -90,7 +92,8 @@
     align-items:center;justify-content:center;z-index:60;padding:20px}
   #mov.open{display:flex}
   #modal{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;
-    padding:26px 28px;width:min(480px,100%);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+    padding:26px 28px;width:min(480px,100%);box-shadow:0 30px 80px rgba(0,0,0,.6);
+    max-height:calc(100vh - 40px);overflow:auto}
   .spin{width:44px;height:44px;margin:26px auto 0;border-radius:50%;
     border:3px solid var(--line);border-top-color:var(--acc);animation:sp .8s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -174,7 +177,8 @@
   <h2 style="margin:0 0 4px">Minerar Empresas Reais</h2>
   <p class="muted" style="margin:0 0 18px">Cadastro público OpenStreetMap + verificação de site em tempo real. Sem API paga.</p>
   <div id="mform">
-    <div style="margin-bottom:12px"><label>Nicho / Segmento</label><select id="m-nicho"></select></div>
+    <div style="margin-bottom:12px"><label>Nichos / Segmentos — segure Ctrl (ou ⌘) para marcar vários</label>
+      <select id="m-nicho" multiple size="6"></select></div>
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-bottom:12px">
       <div><label>Cidade</label><input id="m-cidade" placeholder="Curitiba" value="Curitiba"></div>
       <div><label>Estado</label><select id="m-uf"></select></div>
@@ -228,7 +232,8 @@
   </div>
 
   <div class="actions">
-    <button class="primary" id="exp">⬇ Exportar CSV / Excel</button>
+    <button class="primary" id="exp">⬇ Exportar filtrados</button>
+    <button id="exp-todos">⬇ Exportar TODOS (Excel)</button>
     <button id="limpar">Limpar filtros</button>
     <span class="muted">Em lote:</span>
     <select class="st" id="lote">
@@ -339,6 +344,7 @@ async function carregar() {
   todos = d.leads;
   if (!$('#m-nicho').options.length) {
     for (const n of d.facetas.mineracao) $('#m-nicho').add(new Option(n.label, n.id));
+    $('#m-nicho').selectedIndex = 0;
     for (const u of d.facetas.estados) $('#m-uf').add(new Option(u, u));
     $('#m-uf').value = 'PR';
   }
@@ -585,61 +591,67 @@ $('#mfechar').onclick = () => { abrirModal(false); timers.forEach(clearTimeout);
 $('#mov').onclick = (e) => e.target === $('#mov') && $('#mfechar').click();
 
 $('#m-go').onclick = async () => {
-  const body = { nicho: $('#m-nicho').value, cidade: $('#m-cidade').value.trim(),
-    uf: $('#m-uf').value, quantidade: Number($('#m-qtd').value), apenas_whatsapp: $('#m-wpp').checked };
-  LS.gravar('so_wpp', body.apenas_whatsapp);   // a escolha vale pras próximas minerações
-  if (!body.cidade) return $('#m-cidade').focus();
-  const kBusca = chaveBusca(body);
-  body.offset = offsets[kBusca] ?? 0;      // continua de onde parou nesta mesma busca
+  const marcados = [...$('#m-nicho').selectedOptions];
+  const cidade = $('#m-cidade').value.trim(), uf = $('#m-uf').value;
+  const apenas_whatsapp = $('#m-wpp').checked, quantidade = Number($('#m-qtd').value);
+  if (!marcados.length) return $('#m-nicho').focus();
+  if (!cidade) return $('#m-cidade').focus();
+  LS.gravar('so_wpp', apenas_whatsapp);   // a escolha vale pras próximas minerações
   $('#mform').hidden = true; $('#mload').hidden = false;
-  timers = PASSOS.map(([msg, sub, pct], i) => setTimeout(() => {
-    $('#mmsg').textContent = msg; $('#msub').textContent = sub; $('#mbar').style.width = pct + '%';
-  }, i * 6000));
-  try {
-    const r = await fetch('/api/minerar', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
-    const d = await r.json();
+  const linhas = [], adicionados = [];
+  let falha = null;
+  // Serial de propósito: o Overpass é base pública e limita requisições em paralelo.
+  for (const [i, opt] of marcados.entries()) {
+    const body = { nicho: opt.value, cidade, uf, quantidade, apenas_whatsapp };
+    const kBusca = chaveBusca(body);
+    body.offset = offsets[kBusca] ?? 0;            // cada segmento tem seu próprio cursor
+    const pre = marcados.length > 1 ? `[${i + 1}/${marcados.length}] ${opt.text} · ` : '';
     timers.forEach(clearTimeout);
-    if (!r.ok || d.erro) throw new Error(d.erro || 'falha na mineração');
-    $('#mbar').style.width = '100%';
-    $('#mload').hidden = true; $('#mform').hidden = false;
-    // avança (ou zera, quando o servidor diz que a varredura fechou) o cursor desta busca
-    offsets[kBusca] = d.proximo_offset ?? 0;
-    LS.gravar('offsets', offsets);
-    if (!d.encontrados) return $('#modal').insertAdjacentHTML('beforeend',
-      `<div class="err">${body.offset
-        ? `Fim da fila: você já varreu os ${d.disponiveis} estabelecimentos de <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
-           <br><span class="muted">Na próxima vez a varredura recomeça do início (o que já está na base não repete). Pra achar leads novos agora, troque de segmento ou de cidade.</span>`
-        : `Nenhuma empresa encontrada para <b>${esc(body.cidade)}/${body.uf}</b> nesse segmento.
-           <br><span class="muted">${d.apenas_whatsapp && d.analisados
-             ? `Analisei ${d.analisados} estabelecimentos e nenhum tem celular no cadastro público — a maioria só publica fixo. Desmarque "Apenas empresas com WhatsApp" para incluí-los.`
-             : 'Confira a grafia exata do município (ex.: "São José dos Campos") e a UF, ou tente outro segmento.'}</span>`}</div>`);
-    // guardados no navegador: na Vercel a instância morre e leva os minerados junto
-    const conhecidos = new Set([...minerados, ...todos].map(l => l.cnpj));
-    const adicionados = d.leads.filter(l => !conhecidos.has(l.cnpj) && !descartados.has(l.cnpj));
-    minerados = [...adicionados, ...minerados];
-    LS.gravar('minerados', minerados);
-    $('#modal').insertAdjacentHTML('beforeend',
-      `<div class="ok">✓ ${adicionados.length} novas empresas reais mineradas com sucesso!
-        <br><span class="muted">${d.apenas_whatsapp ? `${d.analisados} estabelecimentos analisados · ${d.encontrados} com WhatsApp` : `${d.encontrados} encontradas`} · ${d.encontrados - adicionados.length} já estavam na base ou descartadas</span>
-        <br><span class="muted">${d.esgotado
-          ? `Varredura completa nesse segmento/cidade (${d.disponiveis} estabelecimentos) — a próxima recomeça do início.`
-          : `Minerados ${d.offset + 1}–${d.offset + d.encontrados} de ${d.disponiveis}. Clique de novo pra continuar da próxima página.`}</span>
-        <br><button class="primary" id="ver-leads" style="margin-top:10px">✓ Ver Leads Minerados na Tabela</button></div>`);
-    $('#ver-leads').onclick = () => abrirModal(false);
-    // limpa TODOS os filtros: um "porte: EPP" ou "1+ ano" esquecido esconde o lead recém-minerado
-    // (minerado não tem porte nem data de abertura no cadastro público)
-    F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : '');
-    aplicar();
-    const novos = new Set(d.leads.map(l => l.cnpj));      // recém-minerados sobem pro topo desta visão
-    leads.sort((a, b) => (novos.has(b.cnpj) ? 1 : 0) - (novos.has(a.cnpj) ? 1 : 0));
-    render(leads.length);
-  } catch (e) {
-    timers.forEach(clearTimeout);
-    $('#mload').hidden = true; $('#mform').hidden = false;
-    $('#modal').insertAdjacentHTML('beforeend',
-      `<div class="err">Falha ao minerar: ${esc(e.message)}<br>
-        <span class="muted">Verifique o nome exato da cidade e a UF, ou tente de novo — a base pública às vezes limita requisições.</span></div>`);
+    timers = PASSOS.map(([msg, sub, pct], k) => setTimeout(() => {
+      $('#mmsg').textContent = pre + msg; $('#msub').textContent = sub;
+      $('#mbar').style.width = ((i + pct / 100) / marcados.length * 100).toFixed(0) + '%';
+    }, k * 6000));
+    try {
+      const r = await fetch('/api/minerar', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+      const d = await r.json();
+      if (!r.ok || d.erro) throw new Error(d.erro || 'falha na mineração');
+      offsets[kBusca] = d.proximo_offset ?? 0;
+      // guardados no navegador: na Vercel a instância morre e leva os minerados junto
+      const conhecidos = new Set([...minerados, ...todos, ...adicionados].map(l => l.cnpj));
+      const novos = d.leads.filter(l => !conhecidos.has(l.cnpj) && !descartados.has(l.cnpj));
+      adicionados.push(...novos);
+      minerados = [...novos, ...minerados];
+      linhas.push(`<b>${esc(opt.text)}</b>: ${!d.encontrados
+        ? (body.offset ? `fim da fila — os ${d.disponiveis} estabelecimentos já foram varridos (recomeça do início na próxima)`
+                       : 'nada encontrado nessa cidade/segmento')
+        : `${novos.length} novos · ${d.encontrados - novos.length} já na base · ${d.offset + 1}–${d.offset + d.encontrados} de ${d.disponiveis}`}`);
+    } catch (e) { falha = e; break; }
   }
+  timers.forEach(clearTimeout);
+  $('#mbar').style.width = '100%';
+  $('#mload').hidden = true; $('#mform').hidden = false;
+  LS.gravar('minerados', minerados);
+  LS.gravar('offsets', offsets);
+  const bloco = (cls, html) => $('#modal').insertAdjacentHTML('beforeend', `<div class="${cls}">${html}</div>`);
+  if (falha) bloco('err', `Falha ao minerar: ${esc(falha.message)}<br>
+    <span class="muted">Confira o nome exato da cidade e a UF, ou tente de novo — a base pública às vezes limita requisições.${
+      adicionados.length ? ` Os ${adicionados.length} leads dos segmentos anteriores já foram salvos.` : ''}</span>`);
+  if (!adicionados.length && !falha) bloco('err', `Nenhuma empresa nova em <b>${esc(cidade)}/${uf}</b>.
+    <br><span class="muted">${linhas.join('<br>')}${apenas_whatsapp
+      ? '<br>Desmarque "Apenas empresas com WhatsApp" para incluir quem só publica telefone fixo.' : ''}</span>`);
+  if (adicionados.length) {
+    bloco('ok', `✓ ${adicionados.length} novas empresas reais mineradas!
+      <br><span class="muted" style="display:block;text-align:left;margin-top:8px;line-height:1.7">${linhas.join('<br>')}</span>
+      <button class="primary" id="ver-leads" style="margin-top:10px">✓ Ver Leads Minerados na Tabela</button>`);
+    $('#ver-leads').onclick = () => abrirModal(false);
+  }
+  // limpa TODOS os filtros: um "porte: EPP" ou "1+ ano" esquecido esconde o lead recém-minerado
+  // (minerado não tem porte nem data de abertura no cadastro público)
+  F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : '');
+  aplicar();
+  const novos = new Set(adicionados.map(l => l.cnpj));    // recém-minerados sobem pro topo desta visão
+  leads.sort((a, b) => (novos.has(b.cnpj) ? 1 : 0) - (novos.has(a.cnpj) ? 1 : 0));
+  render(leads.length);
 };
 
 // CSV montado aqui: o servidor não enxerga status nem leads minerados guardados no navegador.
@@ -647,14 +659,17 @@ $('#m-go').onclick = async () => {
 const CSV_COLS = ['nome','razao_social','cnpj','nicho','cnae','cidade','uf','endereco','porte','anos',
   'telefone','whatsapp','email','site','site_status','instagram','funcionarios',
   'oferta_tag','score','prioridade','status','origem','gancho'];
-$('#exp').onclick = () => {
-  const linhas = [CSV_COLS.join(';'), ...leads.map(l =>
+const exportar = (linhas, sufixo) => {
+  const csv = [CSV_COLS.join(';'), ...linhas.map(l =>
     CSV_COLS.map(c => `"${String(l[c] ?? '').replaceAll('"','""')}"`).join(';'))];
-  const url = URL.createObjectURL(new Blob(['﻿' + linhas.join('\r\n')], {type:'text/csv;charset=utf-8'}));
+  const url = URL.createObjectURL(new Blob(['﻿' + csv.join('\r\n')], {type:'text/csv;charset=utf-8'}));
   const a = Object.assign(document.createElement('a'),
-    {href: url, download: `lead-radar-${new Date().toISOString().slice(0,10)}.csv`});
+    {href: url, download: `lead-radar-${sufixo}-${new Date().toISOString().slice(0,10)}.csv`});
   a.click(); URL.revokeObjectURL(url);
 };
+$('#exp').onclick = () => exportar(leads, 'filtrados');
+// TODOS = a base inteira menos os descartados, ignorando os filtros da tela
+$('#exp-todos').onclick = () => exportar(base().sort((a, b) => b.score - a.score), 'todos');
 $('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : ''); aplicar(); };
 for (const f of F) $('#'+f).addEventListener(f === 'q' ? 'input' : 'change', aplicar);
 
