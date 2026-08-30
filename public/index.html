@@ -656,12 +656,23 @@ $('#m-go').onclick = async () => {
 
 // CSV montado aqui: o servidor não enxerga status nem leads minerados guardados no navegador.
 // `;` + BOM = abre direto no Excel PT-BR.
-const CSV_COLS = ['nome','razao_social','cnpj','nicho','cnae','cidade','uf','endereco','porte','anos',
-  'telefone','whatsapp','email','site','site_status','instagram','funcionarios',
-  'oferta_tag','score','prioridade','status','origem','gancho'];
+// Planilha enxuta: só o que o vendedor usa pra abordar. O resto do cadastro fica no Raio-X.
+// [cabeçalho, como tirar do lead] — coluna derivada (contato, presença) não é campo do objeto.
+const CSV_COLS = [
+  ['Nome', (l) => l.nome],
+  ['Contato', (l) => l.whatsapp || l.telefone],
+  ['Segmento', (l) => l.nicho],
+  ['Cidade', (l) => l.cidade],
+  ['Presença digital', (l) => [
+    l.site ? `site: ${l.site} (${l.site_status})` : 'sem site',
+    l.instagram && `instagram: ${l.instagram}`,
+  ].filter(Boolean).join(' · ')],
+  ['Observação', (l) => l.obs],
+];
 const exportar = (linhas, sufixo) => {
-  const csv = [CSV_COLS.join(';'), ...linhas.map(l =>
-    CSV_COLS.map(c => `"${String(l[c] ?? '').replaceAll('"','""')}"`).join(';'))];
+  const celula = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`;
+  const csv = [CSV_COLS.map(([h]) => h).join(';'),
+    ...linhas.map((l) => CSV_COLS.map(([, pega]) => celula(pega(l))).join(';'))];
   const url = URL.createObjectURL(new Blob(['﻿' + csv.join('\r\n')], {type:'text/csv;charset=utf-8'}));
   const a = Object.assign(document.createElement('a'),
     {href: url, download: `lead-radar-${sufixo}-${new Date().toISOString().slice(0,10)}.csv`});
