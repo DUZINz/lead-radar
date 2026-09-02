@@ -112,7 +112,8 @@ assert.equal(ehCelular('+351 912 345 678', 'PT'), true);
 assert.equal(ehCelular('+351 21 123 4567', 'PT'), false, 'fixo de Lisboa não é celular');
 assert.equal(ehCelular('07123 456789', 'GB'), true, 'o 0 de tronco britânico sai antes de testar');
 assert.equal(ehCelular('+44 20 7123 4567', 'GB'), false, 'fixo de Londres não é celular');
-assert.equal(ehCelular('(415) 555-1234', 'US'), true, 'nos EUA não dá pra separar fixo de móvel: entra');
+// EUA: o número não diz se é móvel e o cadastro não traz WhatsApp — não dá pra afirmar canal
+assert.equal(ehCelular('(415) 555-1234', 'US'), false, 'nos EUA nenhum número vira WhatsApp por dedução');
 assert.equal(e164('07123 456789', 'GB'), '+447123456789', 'link do WhatsApp sai em E.164');
 assert.equal(e164('+55 41 99999-0000', 'BR'), '+5541999990000');
 assert.equal(e164('', 'BR'), '', 'sem telefone não inventa link');
@@ -124,5 +125,10 @@ assert.equal(e({ ...semPresenca, pais: 'IT', idioma: 'it', whatsapp: '+39 320 12
   'celular italiano é canal acionável');
 assert.equal(e({ ...semPresenca, pais: 'IT', idioma: 'it', whatsapp: '+39 02 12345678' }).prioridade, 'Média',
   'fixo italiano não vira Alta');
+// nos EUA o canal acionável é outro: sem WhatsApp no país, quem manda é e-mail ou telefone
+const eua = { ...semPresenca, pais: 'US', idioma: 'en', whatsapp: '' };
+assert.equal(e({ ...eua, email: 'contato@x.com' }).prioridade, 'Alta', 'e-mail é canal acionável nos EUA');
+assert.equal(e({ ...eua, telefone: '(415) 555-1234' }).prioridade, 'Alta', 'telefone também');
+assert.equal(e({ ...eua, telefone: '', email: '' }).prioridade, 'Média', 'lead americano sem contato nenhum não é Alta');
 
 console.log('ok — motor, copy curta (<250) nos 3 idiomas, telefone por país e paginação');

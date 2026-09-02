@@ -84,9 +84,13 @@ Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
 2. **Ranking de contato** — quem tem telefone/site/endereço vem primeiro, desempate por id do OSM.
    O teto de candidatos é fixo (400, ou 800 com WhatsApp) justamente para a fila ser idêntica entre
    duas execuções da mesma busca — é o que faz o offset significar alguma coisa.
-   Com **📱 Apenas empresas com WhatsApp** (ligado por padrão) mantém só celular válido — e a regra
-   é a do país (BR: DDD + 9 dígitos começando em 9; PT: 9xxxxxxxx; GB: 07xxx; IT: 3xx; US: qualquer
-   número de 10 dígitos, porque lá não existe faixa de celular separada do fixo).
+   Com **📱 Apenas empresas com WhatsApp** mantém só celular válido — e a regra é a do país
+   (BR: DDD + 9 dígitos começando em 9; PT: 9xxxxxxxx; GB: 07xxx; IT: 3xx). **Nos EUA o filtro é
+   desligado**: lá o número não diz se é móvel (fixo e celular dividem a faixa) e ninguém publica
+   WhatsApp no cadastro — 0 tags de celular e 0 de WhatsApp em 580 POIs medidos no Arizona. Deduzir
+   dava link quebrado em todo lead. Lead americano só recebe WhatsApp se a empresa publicou a tag
+   `contact:whatsapp`; sem isso o canal é e-mail (com o gancho pronto) ou telefone — e é isso que
+   abre a prioridade Alta por lá. O botão **Acionar** segue o canal que o lead realmente tem.
    Celular é tag rara no OSM: espere de 0 a 5 leads a cada 30-100
    estabelecimentos analisados — a maioria publica só fixo. O modal mostra esse funil e sugere
    desmarcar a opção quando o resultado vem vazio.

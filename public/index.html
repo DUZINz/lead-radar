@@ -197,7 +197,7 @@
     <label for="m-wpp" class="wppbox">
       <input type="checkbox" id="m-wpp">
       <span><b>📱 Apenas empresas com WhatsApp</b><br>
-        <span class="muted">ignora telefone fixo e sem contato. Desmarcado, traz também quem só tem fixo — nem toda empresa publica celular</span></span>
+        <span class="muted" id="m-wpp-txt">ignora telefone fixo e sem contato. Desmarcado, traz também quem só tem fixo — nem toda empresa publica celular</span></span>
     </label>
     <button class="primary" id="m-go" style="width:100%;padding:12px">Iniciar Mineração em Tempo Real</button>
     <p class="muted" style="margin:12px 0 0;font-size:11px">A busca leva de 15s a 90s: consulta a base pública,
@@ -284,6 +284,22 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'
 // o servidor manda o número já em E.164 (DDI do país minerado). Lead antigo é sempre BR.
 const zap = (l, texto) => 'https://wa.me/' + (l.whatsapp_e164 || '55' + l.whatsapp).replace(/\D/g,'') +
   (texto ? '?text=' + encodeURIComponent(texto) : '');
+
+// Acionar = o canal que ESSE lead realmente tem. WhatsApp só quando existe de verdade (celular
+// publicado, ou a tag da própria empresa). Nos EUA quase nunca existe — o cadastro público não
+// diz se o número é móvel e ninguém tagueia WhatsApp lá —, então sobra e-mail com o gancho
+// pronto, ou a ligação. Fingir WhatsApp lá dava "o número não está no WhatsApp" em todo clique.
+const acao = (l, grande) => {
+  const cls = grande ? 'btn-zap-lead' : 'zap btn-zap-lead';
+  const est = grande ? ' style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px"' : '';
+  if (l.whatsapp) return `<a class="${cls}" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank"
+    rel="noopener"${est} title="Abre o WhatsApp com o gancho já escrito">📱 ${grande ? 'Abrir WhatsApp com o gancho' : esc(l.whatsapp)}</a>`;
+  if (l.email) return `<a class="${cls}" data-cnpj="${l.cnpj}" href="mailto:${esc(l.email)}?body=${encodeURIComponent(l.gancho)}"${est}
+    title="Abre o e-mail com o gancho já escrito">✉ ${grande ? 'Abrir e-mail com o gancho' : 'E-mail'}</a>`;
+  if (l.telefone) return `<a class="zap" href="tel:${esc((l.telefone_e164 || l.telefone).replace(/[^\d+]/g,''))}"${est}
+    title="Sem WhatsApp nem e-mail no cadastro — resta ligar">☎ ${esc(l.telefone)}</a>`;
+  return grande ? '' : '<span class="semzap">sem contato direto</span>';
+};
 let leads = [], todos = [], sel = new Set(), paises = [];
 const nomePais = (p) => paises.find((x) => x.id === (p ?? 'BR'))?.nome ?? (p ?? 'BR');
 
@@ -309,6 +325,12 @@ if (minerados.some(l => !real(l.cnpj)) || Object.keys(statusLocal).some(c => !re
   descartados = new Set([...descartados].filter(real));
   LS.gravar('minerados', minerados); LS.gravar('status', statusLocal);
   LS.gravar('descartados', [...descartados]);
+}
+// leads americanos minerados antes da correção carregam um "WhatsApp" que nunca existiu — o
+// link abria "o número não está no WhatsApp". Limpa uma vez; o telefone continua no cadastro.
+if (minerados.some((l) => l.pais === 'US' && l.whatsapp)) {
+  minerados = minerados.map((l) => l.pais === 'US' ? { ...l, whatsapp: '', whatsapp_e164: '' } : l);
+  LS.gravar('minerados', minerados);
 }
 
 const valor = (f) => $('#'+f).value;
@@ -386,6 +408,14 @@ function trocarPais(inicial) {
   for (const [id, nome] of Object.entries(p.estados)) $('#m-uf').add(new Option(nome, id));
   $('#m-uf').value = inicial && p.estados[inicial] ? inicial : Object.keys(p.estados)[0];
   $('#m-cidade').placeholder = { BR: 'Curitiba', US: 'Austin', PT: 'Braga', GB: 'Brighton', IT: 'Bologna' }[p.id] ?? '';
+  // nos EUA o cadastro público não distingue celular de fixo nem publica WhatsApp: o filtro não
+  // teria como funcionar e, ligado, devolveria zero. Melhor desligar e dizer por quê.
+  const semZap = p.id === 'US';
+  $('#m-wpp').disabled = semZap;
+  if (semZap) $('#m-wpp').checked = false;
+  $('#m-wpp-txt').textContent = semZap
+    ? 'indisponível nos EUA: lá o número não diz se é celular e ninguém publica WhatsApp no cadastro. Esses leads se acionam por e-mail ou telefone.'
+    : 'ignora telefone fixo e sem contato. Desmarcado, traz também quem só tem fixo — nem toda empresa publica celular';
 }
 
 // cidade só faz sentido no escopo cidade; a divisão, em tudo que não seja o país inteiro
@@ -438,10 +468,7 @@ function render(total) {
     <td class="prio-td"><span class="prio ${l.prioridade}">${l.prioridade}</span></td>
     <td class="st-td"><select class="st" data-cnpj="${l.cnpj}">${Object.entries(STATUS)
         .map(([v, t]) => `<option value="${v}" ${l.status===v?'selected':''}>${t}</option>`).join('')}</select></td>
-    <td class="zapcol">${l.whatsapp
-      ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank" rel="noopener"
-           title="Abre o WhatsApp com o gancho já escrito">📱 ${l.whatsapp}</a>`
-      : '<span class="semzap">sem WhatsApp</span>'}</td>
+    <td class="zapcol">${acao(l)}</td>
     <td class="del-td"><button class="del" data-cnpj="${l.cnpj}" title="Excluir este lead da base">🗑</button></td>
   </tr>`).join('') || `<tr class="vazio"><td colspan="11" style="padding:30px;text-align:center" class="muted">
       Nenhuma empresa bate com esses filtros.</td></tr>`;
@@ -455,7 +482,8 @@ function raioX(l) {
     <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
       <span class="pill">${esc(l.oferta_tag)}</span>
       <span class="prio ${l.prioridade}">PRIORIDADE ${l.prioridade.toUpperCase()}</span>
-      ${l.whatsapp ? '<span class="badge-wpp">📱 WhatsApp Verificado</span>' : ''}</div>
+      ${l.whatsapp ? `<span class="badge-wpp">📱 ${l.whatsapp_fonte === 'publicado'
+        ? 'WhatsApp publicado pela empresa' : 'Celular publicado'}</span>` : ''}</div>
 
     <h3>Cadastro</h3>
     <div class="kv">
@@ -473,7 +501,13 @@ function raioX(l) {
 
     <h3>Contato</h3>
     <div class="kv">
-      <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
+      <span>Acionar por</span><div>${acao(l)}</div>
+      <span>WhatsApp</span><div>${l.whatsapp
+        ? `${esc(l.whatsapp)} <span class="muted">— ${l.whatsapp_fonte === 'publicado'
+            ? 'a empresa publicou esse WhatsApp no cadastro' : 'celular publicado (WhatsApp provável, não verificado)'}</span>`
+        : `<span class="muted">${l.pais === 'US'
+            ? 'nos EUA o cadastro público não diz se o número é celular, e ninguém publica WhatsApp — não dá pra afirmar'
+            : 'só telefone fixo'}</span>`}</div>
       <span>Telefone</span><div>${esc(l.telefone)}</div>
       <span>E-mail</span><div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>
       <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>${
@@ -505,7 +539,7 @@ function raioX(l) {
       <button id="copiar">📋 Copiar gancho</button>
       <button id="copiar-fu">📋 Copiar follow-up</button>
       <button id="excluir-lead">🗑 Excluir lead</button>
-      ${l.whatsapp ? `<a class="btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank" rel="noopener" style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px">📱 Abrir WhatsApp com o gancho</a>` : ''}
+      ${acao(l, true)}
     </div>`;
   $('#copiar').onclick = async (e) => {
     await navigator.clipboard.writeText(l.gancho);

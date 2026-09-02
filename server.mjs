@@ -112,6 +112,12 @@ const anosAtivo = (abertura) => (Date.now() - new Date(abertura)) / 31557600000;
 // AQUI — é o único lugar. `test_score.mjs` trava o contrato de "não é a maioria".
 const ALTA = { forte: 50, duplo: 40, eixo: 35 };
 
+// Canal pra acionar HOJE — e ele muda de país. No Brasil, Portugal, Inglaterra e Itália é o
+// WhatsApp (o número denuncia o celular). Nos EUA esse canal não existe no cadastro público:
+// nem faixa de celular, nem tag de WhatsApp. Lá o que dá pra fazer hoje é e-mail ou ligação,
+// então é isso que abre a prioridade Alta — senão nenhum lead americano seria acionável.
+const acionavel = (l) => l.pais === 'US' ? !!(l.email || l.telefone) : ehCelular(l.whatsapp, l.pais);
+
 export function enriquecer(l, status) {
   const ofertas = pontuar(l);
   const top = ofertas[0] ?? { id: 'web', tag: OFERTAS.web.tag, score: 0, motivos: [] };
@@ -130,7 +136,7 @@ export function enriquecer(l, status) {
     // médios juntos — caso do lead minerado, que não expõe sistemas nem quadro interno).
     // O filtro de canal é o que segura o percentual: sem celular não dá pra disparar, então é
     // pesquisa, não lead quente. Sem ele, 48% da base saía Alta e a cor não significava nada.
-    prioridade: (anos === null || anos >= 1) && ehCelular(l.whatsapp, l.pais) &&
+    prioridade: (anos === null || anos >= 1) && acionavel(l) &&
       (top.score >= ALTA.forte ||
         (top.score >= ALTA.duplo && ofertas.filter((o) => o.score >= ALTA.eixo).length >= 2))
       ? 'Alta' : top.score >= 35 ? 'Média' : 'Baixa',
@@ -362,14 +368,16 @@ const nacional = (tel, pais = 'BR') => {
 };
 
 // Celular = canal que dá pra acionar hoje (WhatsApp). A regra é do país, não universal.
-// ponytail: nos EUA não existe faixa de celular separada do fixo — qualquer número de 10
-// dígitos entra como acionável. Se não tiver WhatsApp, o link só não abre conversa.
 const MOVEL = {
   BR: (d) => d.length === 11 && d[2] === '9',
-  US: (d) => d.length === 10,
   PT: (d) => d.length === 9 && d[0] === '9',
   GB: (d) => d.length === 10 && d[0] === '7',
   IT: (d) => d.length >= 9 && d.length <= 10 && d[0] === '3',
+  // EUA: o número NÃO diz se é móvel (fixo e celular dividem a mesma faixa) e o cadastro público
+  // não traz tag de celular nem de WhatsApp por lá — 0 de cada em 580 POIs medidos no Arizona.
+  // Inferir dava link quebrado em todo lead ("o número não está no WhatsApp"). Sem dado, a gente
+  // não afirma: lead americano só tem WhatsApp se a própria empresa publicou a tag.
+  US: () => false,
 };
 export const ehCelular = (tel, pais = 'BR') => (MOVEL[pais] ?? MOVEL.BR)(nacional(tel, pais));
 export const e164 = (tel, pais = 'BR') => (tel ? `+${(PAISES[pais] ?? PAISES.BR).ddi}${nacional(tel, pais)}` : '');
@@ -383,7 +391,11 @@ const formatarTel = (tel, pais = 'BR') => {
 };
 // o OSM às vezes empilha dois números no mesmo tag ("+39 02 111; +39 02 222"): fica o primeiro,
 // senão os dígitos se colam e viram um telefone que não existe
-const telDe = (t) => (t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile || '').split(/[;,/]/)[0].trim();
+const umNumero = (v) => String(v || '').split(/[;,/]/)[0].trim();
+const telDe = (t) => umNumero(t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile);
+// única fonte de WhatsApp que não é palpite: a empresa publicou a tag. Vale em qualquer país,
+// e às vezes vem como link (wa.me/5541...) em vez de número.
+const zapDe = (t) => umNumero(t['contact:whatsapp'] || t.whatsapp).replace(/^https?:\S*?(\d[\d\s()+-]*)$/, '$1');
 const chaveLead = (l) => soDigitos(l.telefone) || soDigitos(l.whatsapp) || `${l.nome}|${l.cidade}`.toLowerCase();
 
 async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cidade,
@@ -462,6 +474,8 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   const leads = await Promise.all(elementos.map(async (e) => {
     const t = e.tags;
     const tel = telDe(t);
+    // tag explícita ganha do palpite; sem ela, só vira WhatsApp onde o número denuncia celular
+    const zap = zapDe(t) || (ehCelular(tel, pais) ? tel : '');
     const site = await checarSite(t.website || t['contact:website'] || t.url || '');
     const endereco = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(', ');
     const bairro = t['addr:suburb'] || t['addr:neighbourhood'] || '';
@@ -478,9 +492,11 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
       porte: 'N/D',
       abertura: null,
       telefone: tel ? formatarTel(tel, pais) : '',
-      whatsapp: ehCelular(tel, pais) ? formatarTel(tel, pais) : '',
+      telefone_e164: tel ? e164(tel, pais) : '',   // pra ligar de outro país o DDI tem que ir junto
+      whatsapp: zap ? formatarTel(zap, pais) : '',
       // link do WhatsApp já resolvido: o DDI é do país minerado, o navegador não precisa saber
-      whatsapp_e164: ehCelular(tel, pais) ? e164(tel, pais) : '',
+      whatsapp_e164: zap ? e164(zap, pais) : '',
+      whatsapp_fonte: zapDe(t) ? 'publicado' : zap ? 'celular' : '',   // publicado = a empresa tagueou
       email: t.email || t['contact:email'] || '',
       ...site,
       instagram: (t['contact:instagram'] || '').replace(/^https?:\/\/(www\.)?instagram\.com\//, '@').replace(/\/$/, ''),
@@ -530,7 +546,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
 // busca produzirem exatamente a mesma fila. Exportado porque é o que o teste consegue checar
 // sem rede (o resto de `minerar` depende do Overpass).
 export const ranquear = (candidatos, apenas_whatsapp = false, pais = 'BR') => candidatos
-  .filter((e) => !apenas_whatsapp || ehCelular(telDe(e.tags), pais))
+  .filter((e) => !apenas_whatsapp || zapDe(e.tags) || ehCelular(telDe(e.tags), pais))
   .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags) || a.id - b.id);
 
 const pesoContato = (t = {}) =>
