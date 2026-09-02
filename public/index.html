@@ -482,8 +482,8 @@ function raioX(l) {
     <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
       <span class="pill">${esc(l.oferta_tag)}</span>
       <span class="prio ${l.prioridade}">PRIORIDADE ${l.prioridade.toUpperCase()}</span>
-      ${l.whatsapp ? `<span class="badge-wpp">📱 ${l.whatsapp_fonte === 'publicado'
-        ? 'WhatsApp publicado pela empresa' : 'Celular publicado'}</span>` : ''}</div>
+      ${l.whatsapp ? `<span class="badge-wpp">📱 ${({ publicado: 'WhatsApp publicado pela empresa',
+        site: 'WhatsApp achado no site' })[l.whatsapp_fonte] ?? 'Celular publicado'}</span>` : ''}</div>
 
     <h3>Cadastro</h3>
     <div class="kv">
@@ -503,8 +503,10 @@ function raioX(l) {
     <div class="kv">
       <span>Acionar por</span><div>${acao(l)}</div>
       <span>WhatsApp</span><div>${l.whatsapp
-        ? `${esc(l.whatsapp)} <span class="muted">— ${l.whatsapp_fonte === 'publicado'
-            ? 'a empresa publicou esse WhatsApp no cadastro' : 'celular publicado (WhatsApp provável, não verificado)'}</span>`
+        ? `${esc(l.whatsapp)} <span class="muted">— ${({
+            publicado: 'a empresa publicou esse WhatsApp no cadastro público',
+            site: 'link de WhatsApp achado no site da própria empresa',
+          })[l.whatsapp_fonte] ?? 'celular publicado (WhatsApp provável, não verificado)'}</span>`
         : `<span class="muted">${l.pais === 'US'
             ? 'nos EUA o cadastro público não diz se o número é celular, e ninguém publica WhatsApp — não dá pra afirmar'
             : 'só telefone fixo'}</span>`}</div>

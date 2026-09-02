@@ -116,7 +116,10 @@ const ALTA = { forte: 50, duplo: 40, eixo: 35 };
 // WhatsApp (o número denuncia o celular). Nos EUA esse canal não existe no cadastro público:
 // nem faixa de celular, nem tag de WhatsApp. Lá o que dá pra fazer hoje é e-mail ou ligação,
 // então é isso que abre a prioridade Alta — senão nenhum lead americano seria acionável.
-const acionavel = (l) => l.pais === 'US' ? !!(l.email || l.telefone) : ehCelular(l.whatsapp, l.pais);
+// WhatsApp confirmado (tag ou link no site) vale em qualquer país — inclusive fixo com WhatsApp
+// Business, que a dedução por formato jamais pegaria.
+const acionavel = (l) => !!l.whatsapp_e164 || ehCelular(l.whatsapp, l.pais) ||
+  (l.pais === 'US' && !!(l.email || l.telefone));
 
 export function enriquecer(l, status) {
   const ofertas = pontuar(l);
@@ -320,9 +323,19 @@ out center tags ${bruto};
 
 // mede o site de verdade: rapido = moderno, arrastado = lento, quebrado/timeout = defasado,
 // DNS morto = nenhum, bloqueio de bot = protegido (existe e responde, só não deixa medir).
+// O veredito sai do tempo até a resposta, não da leitura, então o limite é 5s e não 3s: com 3s
+// o corpo de site lento era cortado no meio e o WhatsApp publicado nele se perdia (BeHappy).
 // Duas tentativas: cold start de hospedagem compartilhada e blip de rede davam "defasado"
 // falso — e esse veredito vai escrito no gancho que o dono do site vai ler.
 const BLOQUEIO = new Set([401, 403, 405, 406, 429, 503]);
+
+// Botão flutuante de WhatsApp no site da empresa. 82% dos sites de lead em Curitiba têm um —
+// e dois deles eram FIXO com WhatsApp Business, número que dedução por formato nunca pegaria.
+// ponytail: pega o primeiro link da página. Se o rodapé trouxer o WhatsApp da agência que fez
+// o site, vem o da agência — só dá pra distinguir comparando com o telefone do cadastro, e a
+// maioria dos leads não publica telefone. Fonte fica marcada como 'site' pra dar pra auditar.
+const WA_LINK = /(?:wa\.me|(?:api|web)\.whatsapp\.com\/send(?:\/)?\?phone=)\/?(\+?\d[\d\s-]{7,17})/i;
+const zapNaPagina = async (r) => (String(await r.text()).match(WA_LINK)?.[1] ?? '').replace(/\D/g, '');
 
 async function checarSite(raw) {
   if (!raw) return { site: '', site_status: 'nenhum', site_ms: null };
@@ -337,11 +350,15 @@ async function checarSite(raw) {
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     const t = Date.now();
     try {
-      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(3000), headers: { 'user-agent': UA } });
+      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(5000), headers: { 'user-agent': UA } });
       const ms = Date.now() - t;
       // Cloudflare & cia: o site está de pé, só barrou o robô. Não dá pra chamar de defasado.
       if (BLOQUEIO.has(r.status)) return { site: host, site_ms: null, site_status: 'protegido' };
-      if (r.ok) return { site: host, site_ms: ms, site_status: ms < 1000 ? 'moderno' : ms < 2500 ? 'lento' : 'defasado' };
+      // a página já está baixando de qualquer jeito: ler o corpo dá o WhatsApp que a empresa
+      // publicou nela — a única fonte que não é palpite. Nunca pode estragar o veredito de
+      // velocidade, então erro/timeout na leitura só devolve vazio.
+      if (r.ok) return { site: host, site_ms: ms, zap_site: await zapNaPagina(r).catch(() => ''),
+        site_status: ms < 1000 ? 'moderno' : ms < 2500 ? 'lento' : 'defasado' };
       ultimo = 'defasado';                 // 5xx/404: pode ser blip, tenta de novo antes de sentenciar
     } catch (e) {
       ultimo = e.name === 'TimeoutError' ? 'defasado' : 'nenhum';
@@ -474,9 +491,10 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   const leads = await Promise.all(elementos.map(async (e) => {
     const t = e.tags;
     const tel = telDe(t);
-    // tag explícita ganha do palpite; sem ela, só vira WhatsApp onde o número denuncia celular
-    const zap = zapDe(t) || (ehCelular(tel, pais) ? tel : '');
-    const site = await checarSite(t.website || t['contact:website'] || t.url || '');
+    const { zap_site, ...site } = await checarSite(t.website || t['contact:website'] || t.url || '');
+    // ordem = força da evidência: tag da empresa no OSM > link no site dela > dedução pelo número
+    const zap = zapDe(t) || zap_site || (ehCelular(tel, pais) ? tel : '');
+    const fonte = zapDe(t) ? 'publicado' : zap_site ? 'site' : zap ? 'celular' : '';
     const endereco = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(', ');
     const bairro = t['addr:suburb'] || t['addr:neighbourhood'] || '';
     return {
@@ -496,7 +514,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
       whatsapp: zap ? formatarTel(zap, pais) : '',
       // link do WhatsApp já resolvido: o DDI é do país minerado, o navegador não precisa saber
       whatsapp_e164: zap ? e164(zap, pais) : '',
-      whatsapp_fonte: zapDe(t) ? 'publicado' : zap ? 'celular' : '',   // publicado = a empresa tagueou
+      whatsapp_fonte: fonte,        // publicado (tag OSM) | site (link na página) | celular (dedução)
       email: t.email || t['contact:email'] || '',
       ...site,
       instagram: (t['contact:instagram'] || '').replace(/^https?:\/\/(www\.)?instagram\.com\//, '@').replace(/\/$/, ''),

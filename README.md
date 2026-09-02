@@ -99,11 +99,19 @@ Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
    `pais|escopo|nicho|cidade|estado|apenas_whatsapp`): o servidor recebe `offset` e devolve `proximo_offset`,
    `esgotado` e `disponiveis`. Quando a varredura fecha, o cursor zera e a próxima recomeça do
    início — a deduplicação segura o que já está na base.
-4. **Verificador de site ao vivo** — `fetch` com timeout de 3s, **duas tentativas** antes de sentenciar:
+4. **Verificador de site ao vivo** — `fetch` com timeout de 5s, **duas tentativas** antes de sentenciar
+   (o veredito sai do tempo até a resposta, não da leitura do HTML):
    `< 1s` = moderno, `< 2,5s` = lento, erro/timeout nas duas = defasado, DNS morto ou sem site = nenhum.
    HTTP 401/403/405/406/429/503 = **protegido** (Cloudflare/anti-bot: o site está de pé, só não deixa medir)
    — nunca vira "seu site está defasado" no gancho, e não pontua como site problemático.
    Perfil de rede social **não** conta como site.
+   A página já está baixando: o HTML é varrido atrás do link `wa.me` que a empresa publicou nela.
+   É a única fonte de WhatsApp que não é palpite, funciona em qualquer país e pega **fixo com
+   WhatsApp Business** — que nenhuma regra de formato acha. Medido em Curitiba: 9 de 11 sites que
+   abriram (82%) publicavam o número; em Phoenix, 0 de 11. Ordem de confiança gravada em
+   `whatsapp_fonte`: `publicado` (tag no OSM) > `site` (link na página) > `celular` (dedução).
+   Ressalva: vem o primeiro link da página — se o rodapé trouxer o WhatsApp da agência que fez o
+   site, vem o da agência.
 5. **Scoring** — `enriquecer()` define oferta, prioridade, motivos e gancho.
 6. **Persistência** — tabela `minerados` (chave = telefone, ou nome+cidade), sem duplicar, e os leads voltam
    para a memória no próximo boot.
