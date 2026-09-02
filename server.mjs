@@ -130,7 +130,7 @@ export function enriquecer(l, status) {
     // médios juntos — caso do lead minerado, que não expõe sistemas nem quadro interno).
     // O filtro de canal é o que segura o percentual: sem celular não dá pra disparar, então é
     // pesquisa, não lead quente. Sem ele, 48% da base saía Alta e a cor não significava nada.
-    prioridade: (anos === null || anos >= 1) && ehCelular(l.whatsapp) &&
+    prioridade: (anos === null || anos >= 1) && ehCelular(l.whatsapp, l.pais) &&
       (top.score >= ALTA.forte ||
         (top.score >= ALTA.duplo && ofertas.filter((o) => o.score >= ALTA.eixo).length >= 2))
       ? 'Alta' : top.score >= 35 ? 'Média' : 'Baixa',
@@ -145,10 +145,68 @@ export function enriquecer(l, status) {
 const UA = 'LeadRadar/1.0 (prospeccao B2B; contato local)';
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
-const UF_NOME = { AC:'Acre', AL:'Alagoas', AP:'Amapá', AM:'Amazonas', BA:'Bahia', CE:'Ceará', DF:'Distrito Federal',
-  ES:'Espírito Santo', GO:'Goiás', MA:'Maranhão', MT:'Mato Grosso', MS:'Mato Grosso do Sul', MG:'Minas Gerais',
-  PA:'Pará', PB:'Paraíba', PR:'Paraná', PE:'Pernambuco', PI:'Piauí', RJ:'Rio de Janeiro', RN:'Rio Grande do Norte',
-  RS:'Rio Grande do Sul', RO:'Rondônia', RR:'Roraima', SC:'Santa Catarina', SP:'São Paulo', SE:'Sergipe', TO:'Tocantins' };
+// Países ligados. Não existe admin_level padrão no OSM: no Brasil município é 8, em Portugal
+// concelho é 7, na Inglaterra cidade grande tanto pode ser 8 (borough) quanto 6 (unitária).
+// Por isso cada nível é uma LISTA de tentativas, na ordem mais provável primeiro — a consulta
+// só cai pra próxima quando a área não resolve. `area` é como se acha o país no OSM.
+const PAISES = {
+  BR: {
+    nome: 'Brasil', idioma: 'pt', ddi: '55', rotulo: 'Estado',
+    area: '["ISO3166-1"="BR"][admin_level=2]', nivelEstado: ['4'], nivelCidade: ['8'],
+    estados: { AC:'Acre', AL:'Alagoas', AP:'Amapá', AM:'Amazonas', BA:'Bahia', CE:'Ceará', DF:'Distrito Federal',
+      ES:'Espírito Santo', GO:'Goiás', MA:'Maranhão', MT:'Mato Grosso', MS:'Mato Grosso do Sul', MG:'Minas Gerais',
+      PA:'Pará', PB:'Paraíba', PR:'Paraná', PE:'Pernambuco', PI:'Piauí', RJ:'Rio de Janeiro', RN:'Rio Grande do Norte',
+      RS:'Rio Grande do Sul', RO:'Rondônia', RR:'Roraima', SC:'Santa Catarina', SP:'São Paulo', SE:'Sergipe', TO:'Tocantins' },
+  },
+  US: {
+    nome: 'Estados Unidos', idioma: 'en', ddi: '1', rotulo: 'Estado',
+    area: '["ISO3166-1"="US"][admin_level=2]', nivelEstado: ['4'], nivelCidade: ['8', '6'],
+    estados: { AL:'Alabama', AK:'Alaska', AZ:'Arizona', AR:'Arkansas', CA:'California', CO:'Colorado',
+      CT:'Connecticut', DE:'Delaware', DC:'District of Columbia', FL:'Florida', GA:'Georgia', HI:'Hawaii',
+      ID:'Idaho', IL:'Illinois', IN:'Indiana', IA:'Iowa', KS:'Kansas', KY:'Kentucky', LA:'Louisiana',
+      ME:'Maine', MD:'Maryland', MA:'Massachusetts', MI:'Michigan', MN:'Minnesota', MS:'Mississippi',
+      MO:'Missouri', MT:'Montana', NE:'Nebraska', NV:'Nevada', NH:'New Hampshire', NJ:'New Jersey',
+      NM:'New Mexico', NY:'New York', NC:'North Carolina', ND:'North Dakota', OH:'Ohio', OK:'Oklahoma',
+      OR:'Oregon', PA:'Pennsylvania', RI:'Rhode Island', SC:'South Carolina', SD:'South Dakota',
+      TN:'Tennessee', TX:'Texas', UT:'Utah', VT:'Vermont', VA:'Virginia', WA:'Washington',
+      WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming' },
+  },
+  PT: {
+    nome: 'Portugal', idioma: 'pt', ddi: '351', rotulo: 'Distrito',
+    // concelho é admin_level 7 (8 é freguesia): pesquisar "Porto" em 8 traria uma freguesia
+    area: '["ISO3166-1"="PT"][admin_level=2]', nivelEstado: ['6', '4'], nivelCidade: ['7', '8'],
+    estados: { Aveiro:'Aveiro', Beja:'Beja', Braga:'Braga', Bragança:'Bragança',
+      'Castelo Branco':'Castelo Branco', Coimbra:'Coimbra', Évora:'Évora', Faro:'Faro', Guarda:'Guarda',
+      Leiria:'Leiria', Lisboa:'Lisboa', Portalegre:'Portalegre', Porto:'Porto', Santarém:'Santarém',
+      Setúbal:'Setúbal', 'Viana do Castelo':'Viana do Castelo', 'Vila Real':'Vila Real', Viseu:'Viseu',
+      Açores:'Região Autónoma dos Açores', Madeira:'Região Autónoma da Madeira' },
+  },
+  GB: {
+    nome: 'Inglaterra', idioma: 'en', ddi: '44', rotulo: 'Região',
+    // Inglaterra é admin_level 4 DENTRO do Reino Unido — não dá pra usar ISO3166-1=GB aqui,
+    // senão Escócia, País de Gales e Irlanda do Norte entram na busca.
+    area: '[admin_level=4]["name"="England"]', nivelEstado: ['5', '6'], nivelCidade: ['8', '6'],
+    estados: { 'North East England':'North East England', 'North West England':'North West England',
+      'Yorkshire and the Humber':'Yorkshire and the Humber', 'East Midlands':'East Midlands',
+      'West Midlands':'West Midlands', 'East of England':'East of England', 'Greater London':'Greater London',
+      'South East England':'South East England', 'South West England':'South West England' },
+  },
+  IT: {
+    nome: 'Itália', idioma: 'it', ddi: '39', rotulo: 'Região',
+    area: '["ISO3166-1"="IT"][admin_level=2]', nivelEstado: ['4'], nivelCidade: ['8', '6'],
+    estados: { Abruzzo:'Abruzzo', Basilicata:'Basilicata', Calabria:'Calabria', Campania:'Campania',
+      'Emilia-Romagna':'Emilia-Romagna', 'Friuli-Venezia Giulia':'Friuli-Venezia Giulia', Lazio:'Lazio',
+      Liguria:'Liguria', Lombardia:'Lombardia', Marche:'Marche', Molise:'Molise', Piemonte:'Piemonte',
+      Puglia:'Puglia', Sardegna:'Sardegna', Sicilia:'Sicilia', Toscana:'Toscana',
+      // nome oficial no OSM é bilíngue nessas duas — com o nome curto a área não resolve
+      'Trentino-Alto Adige':'Trentino-Alto Adige/Südtirol', Umbria:'Umbria',
+      "Valle d'Aosta":"Valle d'Aosta/Vallée d'Aoste", Veneto:'Veneto' },
+  },
+};
+
+// varrer um país inteiro é ordens de grandeza mais caro que uma cidade: o Overpass precisa
+// de mais fôlego, e a Vercel corta em 60s (aí só rodando local).
+const TIMEOUT = { cidade: 60, estado: 120, pais: 180 };
 
 // catalogo de mineração: rotulo comercial -> filtros OSM + nicho/perfil do Lead Radar
 const CATALOGO = {
@@ -176,30 +234,45 @@ const CATALOGO = {
 
 // "Florianopolis" tem que achar "Florianópolis": se o usuário digitou sem acento, casa por regex tolerante
 const VOGAIS = { a: 'aáàâã', e: 'eéê', i: 'ií', o: 'oóôõ', u: 'uúü', c: 'cç' };
-const nomeCidade = (c) => /[^\x00-\x7F]/.test(c)
-  ? `"name"=${JSON.stringify(c)}`
-  : `"name"~${JSON.stringify('^' + [...c].map((ch) => {
-      const v = VOGAIS[ch.toLowerCase()];
-      return v ? `[${v}${v.toUpperCase()}]` : ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }).join('') + '$')}`;
+// nome exato resolve em ~7s; a regex tolerante a acento custa 3-4x mais, então só entra se a exata falhar
+const filtrosNome = (c) => /[^\x00-\x7F]/.test(c) ? [`"name"=${JSON.stringify(c)}`] : [
+  `"name"=${JSON.stringify(c)}`,
+  `"name"~${JSON.stringify('^' + [...c].map((ch) => {
+    const v = VOGAIS[ch.toLowerCase()];
+    return v ? `[${v}${v.toUpperCase()}]` : ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }).join('') + '$')}`,
+];
 
-async function overpass(cat, cidade, uf, bruto) {
-  // nome exato resolve em ~7s; a regex tolerante a acento custa 3-4x mais, então só entra se a exata falhar
-  const tentativas = [`"name"=${JSON.stringify(cidade)}`];
-  if (!/[^\x00-\x7F]/.test(cidade)) tentativas.push(nomeCidade(cidade));
+// Cada tentativa é um jeito de resolver a área alvo (->.a): nome exato ou tolerante a acento,
+// vezes os admin_level plausíveis daquele país. A primeira que devolver POI ganha.
+function areasAlvo(p, { escopo, estado, cidade }) {
+  if (escopo === 'pais') return [`area${p.area}->.a;`];
+  const pais = `area${p.area}->.p;`;
+  const q = [];
+  for (const nivel of p.nivelEstado) for (const fe of filtrosNome(p.estados[estado] ?? estado)) {
+    const est = (saida) => `${pais}\narea[admin_level=${nivel}][${fe}](area.p)->${saida};`;
+    if (escopo === 'estado') { q.push(est('.a')); continue; }
+    for (const nc of p.nivelCidade) for (const fc of filtrosNome(cidade))
+      q.push(`${est('.e')}\narea[admin_level=${nc}][${fc}](area.e)->.a;`);
+  }
+  return q;
+}
+
+async function overpass(cat, regiao, bruto) {
+  const p = PAISES[regiao.pais];
+  const espera = TIMEOUT[regiao.escopo];
 
   let erro;
-  for (const filtro of tentativas) {
-    const q = `[out:json][timeout:60];
-area[admin_level=4]["name"=${JSON.stringify(UF_NOME[uf] ?? uf)}]->.uf;
-area[admin_level=8][${filtro}](area.uf)->.a;
+  for (const areas of areasAlvo(p, regiao)) {
+    const q = `[out:json][timeout:${espera}];
+${areas}
 (${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
 out center tags ${bruto};
 .a out tags;`;
     for (const url of OVERPASS) {
       try {
         const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA },
-          body: q, signal: AbortSignal.timeout(45000) });
+          body: q, signal: AbortSignal.timeout((espera - 5) * 1000) });
         const txt = await r.text();
         let dados;
         // sob carga o Overpass responde XML/HTML de rate limit em vez de JSON
@@ -255,24 +328,59 @@ async function checarSite(raw) {
 }
 
 // órgão público não é lead B2B: unidade de saúde municipal, escola estadual, CRAS, prefeitura…
-const PUBLICO = /(unidade|posto|centro)\s+(b[áa]sica\s+)?de\s+sa[úu]de|^ubs\b|^upa\b|^cras\b|^caps\b|prefeitura|secretaria\s+(municipal|de\s+estado|de\s+sa[úu]de)|minist[ée]rio|governo\s+do\s+estado|hospital\s+(municipal|estadual|universit[áa]rio)|col[ée]gio\s+estadual|escola\s+(municipal|estadual)/i;
+const PUBLICO = /(unidade|posto|centro)\s+(b[áa]sica\s+)?de\s+sa[úu]de|^ubs\b|^upa\b|^cras\b|^caps\b|prefeitura|secretaria\s+(municipal|de\s+estado|de\s+sa[úu]de)|minist[ée]rio|governo\s+do\s+estado|hospital\s+(municipal|estadual|universit[áa]rio)|col[ée]gio\s+estadual|escola\s+(municipal|estadual)|c[âa]mara\s+municipal|junta\s+de\s+freguesia|city\s+hall|town\s+(hall|council)|county\s+council|borough\s+of\s|public\s+(school|library)|department\s+of\s|nhs\b|comune\s+di\s|scuola\s+(statale|primaria|media|dell)|azienda\s+sanitaria|ospedale\s+(civile|pubblico)/i;
 const ehPublico = (t) => PUBLICO.test(t.name || '') || PUBLICO.test(t.operator || '') ||
-  t['operator:type'] === 'government' || /\.gov\.br/.test(t.website || t['contact:website'] || '');
+  t['operator:type'] === 'government' ||
+  /\.gov\b|\.nhs\.uk\b|comune\.[^.\s]+\.it\b/i.test(t.website || t['contact:website'] || '');
 
 const soDigitos = (s) => String(s || '').replace(/\D/g, '');
-const ehCelular = (tel) => { const d = soDigitos(tel).replace(/^55/, ''); return d.length === 11 && d[2] === '9'; };
-const formatarTel = (tel) => {
-  const d = soDigitos(tel).replace(/^55/, '');
+
+// Número nacional: sem DDI e sem o 0 de tronco. Sem o "+" explícito o DDI só sai se o que
+// sobra ainda tiver cara de telefone — "3931234567" é celular italiano inteiro, não +39 + resto.
+const nacional = (tel, pais = 'BR') => {
+  const raw = String(tel || '').trim(), ddi = (PAISES[pais] ?? PAISES.BR).ddi;
+  const d = soDigitos(raw);
+  const nu = d.startsWith(ddi) && (/^(\+|00)/.test(raw) || d.length > ddi.length + 9) ? d.slice(ddi.length) : d;
+  return nu.replace(/^0/, '');
+};
+
+// Celular = canal que dá pra acionar hoje (WhatsApp). A regra é do país, não universal.
+// ponytail: nos EUA não existe faixa de celular separada do fixo — qualquer número de 10
+// dígitos entra como acionável. Se não tiver WhatsApp, o link só não abre conversa.
+const MOVEL = {
+  BR: (d) => d.length === 11 && d[2] === '9',
+  US: (d) => d.length === 10,
+  PT: (d) => d.length === 9 && d[0] === '9',
+  GB: (d) => d.length === 10 && d[0] === '7',
+  IT: (d) => d.length >= 9 && d.length <= 10 && d[0] === '3',
+};
+export const ehCelular = (tel, pais = 'BR') => (MOVEL[pais] ?? MOVEL.BR)(nacional(tel, pais));
+export const e164 = (tel, pais = 'BR') => (tel ? `+${(PAISES[pais] ?? PAISES.BR).ddi}${nacional(tel, pais)}` : '');
+
+const formatarTel = (tel, pais = 'BR') => {
+  const d = nacional(tel, pais);
+  if (pais === 'US') return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : tel;
+  if (pais !== 'BR') return String(tel).trim();   // fora do BR o OSM já traz "+351 912 345 678"
   return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
     : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : tel;
 };
-const telDe = (t) => t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile || '';
+// o OSM às vezes empilha dois números no mesmo tag ("+39 02 111; +39 02 222"): fica o primeiro,
+// senão os dígitos se colam e viram um telefone que não existe
+const telDe = (t) => (t.phone || t['contact:phone'] || t['contact:mobile'] || t.mobile || '').split(/[;,/]/)[0].trim();
 const chaveLead = (l) => soDigitos(l.telefone) || soDigitos(l.whatsapp) || `${l.nome}|${l.cidade}`.toLowerCase();
 
-async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = false, offset = 0 }) {
+async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cidade,
+                         quantidade = 25, apenas_whatsapp = false, offset = 0 }) {
   const cat = CATALOGO[nicho];
+  const p = PAISES[pais];
+  estado = (estado ?? uf ?? '').trim();          // `uf` é o nome antigo do campo
+  cidade = (cidade ?? '').trim();
   if (!cat) throw new Error(`nicho inválido: ${nicho}`);
-  if (!cidade || !uf) throw new Error('cidade e uf são obrigatórios');
+  if (!p) throw new Error(`país inválido: ${pais}`);
+  if (!TIMEOUT[escopo]) throw new Error(`escopo inválido: ${escopo} (use cidade, estado ou pais)`);
+  if (escopo !== 'pais' && !p.estados[estado]) throw new Error(`${p.rotulo.toLowerCase()} inválido para ${p.nome}: ${estado || '(vazio)'}`);
+  if (escopo === 'cidade' && !cidade) throw new Error('cidade é obrigatória no escopo cidade');
+  const regiao = { pais, escopo, estado, cidade };
   const limite = Math.min(Math.max(Number(quantidade) || 25, 1), 50);
   // De onde continuar a varredura desta (nicho, cidade, uf, apenas_whatsapp). Sem isso, minerar
   // a mesma busca de novo devolvia sempre o mesmo topo do ranking = "0 leads novos" pra sempre.
@@ -284,13 +392,14 @@ async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = f
   // e o teste de site continua limitado a `limite`. (celular é tag rara: com WhatsApp varre o dobro)
   const bruto = apenas_whatsapp ? 800 : 400;
 
-  const brutos = await overpass(cat, cidade.trim(), uf.trim().toUpperCase(), bruto);
+  const brutos = await overpass(cat, regiao, bruto);
   // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
-  // uma cidade separada de "Florianópolis" na base
-  const municipio = brutos.find((e) => e.type === 'area')?.tags?.name || cidade.trim();
+  // uma cidade separada de "Florianópolis" na base. Em busca por estado/país a área
+  // resolvida é o estado/país — aí a cidade de cada lead só pode vir do endereço dele.
+  const municipio = escopo === 'cidade' ? (brutos.find((e) => e.type === 'area')?.tags?.name || cidade) : '';
 
   const candidatos = brutos.filter((e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags));
-  const ranqueados = ranquear(candidatos, apenas_whatsapp);
+  const ranqueados = ranquear(candidatos, apenas_whatsapp, pais);
   const elementos = ranqueados.slice(inicio, alvo);     // a "página" pedida desta varredura
   // ponytail: `bruto` limita o `out` do Overpass, então esgotado pode ser falso positivo quando
   // a página bate exatamente no teto de 800. Só importa em cidade gigante — paginar no Overpass
@@ -313,12 +422,16 @@ async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = f
       nome: t.name,
       nicho: cat.nicho,
       cnae: cat.label,
-      cidade: t['addr:city'] || municipio,
-      uf: uf.trim().toUpperCase(),
+      cidade: t['addr:city'] || t['addr:town'] || t['addr:village'] || municipio,
+      uf: escopo === 'pais' ? (t['addr:state'] || '') : estado,
+      pais,
+      idioma: p.idioma,                        // define em que língua sai o gancho (copy.mjs)
       porte: 'N/D',
       abertura: null,
-      telefone: tel ? formatarTel(tel) : '',
-      whatsapp: ehCelular(tel) ? formatarTel(tel) : '',
+      telefone: tel ? formatarTel(tel, pais) : '',
+      whatsapp: ehCelular(tel, pais) ? formatarTel(tel, pais) : '',
+      // link do WhatsApp já resolvido: o DDI é do país minerado, o navegador não precisa saber
+      whatsapp_e164: ehCelular(tel, pais) ? e164(tel, pais) : '',
       email: t.email || t['contact:email'] || '',
       ...site,
       instagram: (t['contact:instagram'] || '').replace(/^https?:\/\/(www\.)?instagram\.com\//, '@').replace(/\/$/, ''),
@@ -365,8 +478,8 @@ async function minerar({ nicho, cidade, uf, quantidade = 25, apenas_whatsapp = f
 // id. O desempate não é cosmético — o offset só significa alguma coisa se duas execuções da mesma
 // busca produzirem exatamente a mesma fila. Exportado porque é o que o teste consegue checar
 // sem rede (o resto de `minerar` depende do Overpass).
-export const ranquear = (candidatos, apenas_whatsapp = false) => candidatos
-  .filter((e) => !apenas_whatsapp || ehCelular(telDe(e.tags)))
+export const ranquear = (candidatos, apenas_whatsapp = false, pais = 'BR') => candidatos
+  .filter((e) => !apenas_whatsapp || ehCelular(telDe(e.tags), pais))
   .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags) || a.id - b.id);
 
 const pesoContato = (t = {}) =>
@@ -382,6 +495,7 @@ function buscar(q) {
   return LEADS.filter((l) => !fora.has(l.cnpj)).map((l) => enriquecer(l, st.get(l.cnpj)))
     .filter((l) =>
       (!q.get('nicho') || l.nicho === q.get('nicho')) &&
+      (!q.get('pais') || (l.pais ?? 'BR') === q.get('pais')) &&
       (!q.get('uf') || l.uf === q.get('uf')) &&
       (!q.get('cidade') || l.cidade === q.get('cidade')) &&
       (!q.get('porte') || l.porte === q.get('porte')) &&
@@ -393,7 +507,7 @@ function buscar(q) {
     .sort((a, b) => b.score - a.score || b.score_total - a.score_total);
 }
 
-const CSV_COLS = ['nome', 'razao_social', 'cnpj', 'nicho', 'cnae', 'cidade', 'uf', 'endereco', 'porte', 'anos',
+const CSV_COLS = ['nome', 'razao_social', 'cnpj', 'nicho', 'cnae', 'cidade', 'uf', 'pais', 'endereco', 'porte', 'anos',
   'telefone', 'whatsapp', 'email', 'site', 'site_status', 'instagram', 'funcionarios',
   'oferta_tag', 'score', 'prioridade', 'status', 'origem', 'gancho'];
 
@@ -432,7 +546,9 @@ export default async function handler(req, res) {
           ufs: [...new Set(LEADS.map((l) => l.uf))].sort(),
           cidades: [...new Set(LEADS.map((l) => l.cidade))].sort(),
           mineracao: Object.entries(CATALOGO).map(([id, c]) => ({ id, label: c.label })),
-          estados: Object.keys(UF_NOME),
+          // o que a tela precisa saber de cada país: como chamar a divisão e quais existem
+          paises: Object.entries(PAISES).map(([id, p]) =>
+            ({ id, nome: p.nome, rotulo: p.rotulo, estados: p.estados })),
         },
       });
     }

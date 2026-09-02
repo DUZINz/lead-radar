@@ -62,32 +62,37 @@ importa, responde e não toca em disco).
 
 | Rota | O quê |
 |---|---|
-| `GET /api/leads?nicho=&uf=&cidade=&porte=&anos=&oferta=&prioridade=&status=&q=` | leads enriquecidos + facetas; grava a busca no histórico |
+| `GET /api/leads?nicho=&pais=&uf=&cidade=&porte=&anos=&oferta=&prioridade=&status=&q=` | leads enriquecidos + facetas; grava a busca no histórico |
 | `POST /api/status` `{cnpj,status,nota}` | marca status (`novo\|contatado\|reuniao\|proposta\|ganho\|perdido`) |
 | `POST /api/excluir` `{cnpjs:[...]}` | descarta leads (1 ou em lote) — some da tabela, dos KPIs e do CSV |
 | `POST /api/restaurar` `{cnpjs:[...]}` | desfaz a exclusão |
 | `GET /api/lixeira` | o que foi descartado, com data |
 | `GET /api/export.csv?<mesmos filtros>` | CSV com BOM e `;` — abre direto no Excel PT-BR |
-| `POST /api/minerar` `{nicho,cidade,uf,quantidade,apenas_whatsapp,offset}` | **mineração real** — devolve `analisados` (funil), `proximo_offset`, `esgotado` e `disponiveis` (paginação) |
+| `POST /api/minerar` `{nicho,pais,escopo,estado,cidade,quantidade,apenas_whatsapp,offset}` | **mineração real** — `pais` ∈ BR/US/PT/GB/IT, `escopo` ∈ cidade/estado/pais. Devolve `analisados` (funil), `proximo_offset`, `esgotado` e `disponiveis` (paginação) |
 | `GET /api/historico` | últimas 20 buscas |
 
 ## Mineração de leads reais
 
 Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
 
-1. **Overpass / OpenStreetMap** — busca estabelecimentos ativos por segmento dentro do município
-   (`area[admin_level=8]` dentro de `area[admin_level=4]`, então cidade homônima em outro estado não entra).
-   Traz nome, telefone, site, endereço, bairro e horário reais do cadastro público.
+1. **Overpass / OpenStreetMap** — busca estabelecimentos ativos por segmento dentro da área escolhida:
+   **uma cidade**, **um estado/região inteiro** ou **o país inteiro** (`escopo`). A área é sempre
+   resolvida de fora pra dentro (país → estado → cidade), então cidade homônima em outro estado não entra.
+   Não existe `admin_level` padrão no OSM — município é 8 no Brasil, concelho é 7 em Portugal, cidade
+   inglesa pode ser 8 ou 6 —, por isso `PAISES` guarda uma *lista* de níveis por país e a consulta cai
+   pro próximo quando a área não resolve. Traz nome, telefone, site, endereço, bairro e horário reais.
 2. **Ranking de contato** — quem tem telefone/site/endereço vem primeiro, desempate por id do OSM.
    O teto de candidatos é fixo (400, ou 800 com WhatsApp) justamente para a fila ser idêntica entre
    duas execuções da mesma busca — é o que faz o offset significar alguma coisa.
-   Com **📱 Apenas empresas com WhatsApp** (ligado por padrão) mantém só celular válido
-   (DDD + 9 dígitos começando em 9). Celular é tag rara no OSM: espere de 0 a 5 leads a cada 30-100
+   Com **📱 Apenas empresas com WhatsApp** (ligado por padrão) mantém só celular válido — e a regra
+   é a do país (BR: DDD + 9 dígitos começando em 9; PT: 9xxxxxxxx; GB: 07xxx; IT: 3xx; US: qualquer
+   número de 10 dígitos, porque lá não existe faixa de celular separada do fixo).
+   Celular é tag rara no OSM: espere de 0 a 5 leads a cada 30-100
    estabelecimentos analisados — a maioria publica só fixo. O modal mostra esse funil e sugere
    desmarcar a opção quando o resultado vem vazio.
 3. **Paginação (offset)** — minerar a mesma cidade+segmento de novo continua da página seguinte em vez
    de devolver sempre o mesmo topo do ranking. O cursor é do navegador (`lr.offsets`, por
-   `nicho|cidade|uf|apenas_whatsapp`): o servidor recebe `offset` e devolve `proximo_offset`,
+   `pais|escopo|nicho|cidade|estado|apenas_whatsapp`): o servidor recebe `offset` e devolve `proximo_offset`,
    `esgotado` e `disponiveis`. Quando a varredura fecha, o cursor zera e a próxima recomeça do
    início — a deduplicação segura o que já está na base.
 4. **Verificador de site ao vivo** — `fetch` com timeout de 3s, **duas tentativas** antes de sentenciar:
@@ -100,11 +105,22 @@ Botão **🚀 Minerar Leads Reais** no topo da tela. Sem API paga, sem chave:
    para a memória no próximo boot.
 
 20 segmentos disponíveis (clínicas, odontologia, imobiliárias, advocacia, contabilidade, restaurantes,
-auto peças, oficinas, varejo, academias, escolas, hotéis, seguros…) × 27 UFs.
+auto peças, oficinas, varejo, academias, escolas, hotéis, seguros…) × 5 países:
+**Brasil** (27 UFs), **Estados Unidos** (51), **Portugal** (20 distritos), **Inglaterra** (9 regiões)
+e **Itália** (20 regiões) — cada um em cidade, estado/região ou país inteiro.
 
-Órgão público (UBS, prefeitura, escola estadual, site `.gov.br`) é descartado na mineração — não é lead B2B.
+**A mensagem sai no idioma do país minerado**: gancho e follow-up têm versão em português, inglês e
+italiano (`copy.mjs`), escolhidas pelo campo `idioma` do lead. Lead antigo, sem o campo, continua em pt.
+O link do WhatsApp vem pronto do servidor em E.164 (`whatsapp_e164`), com o DDI do país.
+
+País inteiro é ordens de grandeza mais caro que cidade: o timeout do Overpass sobe pra 180s (60s pra
+cidade) e, em segmento de volume alto, a base pública pode recusar — aí é ir por cidade. Na Vercel o
+teto da function é 60s, então busca nacional pesada só roda local.
+
+Órgão público (UBS, prefeitura, city hall, comune, NHS, site `.gov`) é descartado — não é lead B2B.
 O município é gravado com o nome canônico do OSM, então digitar "Florianopolis" não cria uma cidade
-separada de "Florianópolis".
+separada de "Florianópolis". Em busca por estado/país a cidade vem do endereço do próprio lead
+(`addr:city`) e pode vir vazia — o OSM nem sempre traz.
 
 Lead minerado não tem CNPJ/porte/abertura no cadastro público: `anos` fica `null` e `porte` = `N/D`.
 Filtro de idade nunca o esconde. A prioridade Alta exige WhatsApp válido mais dois vetores fortes

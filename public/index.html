@@ -179,9 +179,16 @@
   <div id="mform">
     <div style="margin-bottom:12px"><label>Nichos / Segmentos — segure Ctrl (ou ⌘) para marcar vários</label>
       <select id="m-nicho" multiple size="6"></select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div><label>País</label><select id="m-pais"></select></div>
+      <div><label>Abrangência da busca</label><select id="m-escopo">
+        <option value="cidade">Uma cidade</option>
+        <option value="estado">Estado / região inteira</option>
+        <option value="pais">País inteiro</option></select></div>
+    </div>
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-bottom:12px">
-      <div><label>Cidade</label><input id="m-cidade" placeholder="Curitiba" value="Curitiba"></div>
-      <div><label>Estado</label><select id="m-uf"></select></div>
+      <div id="m-box-cidade"><label>Cidade</label><input id="m-cidade" placeholder="Curitiba" value="Curitiba"></div>
+      <div id="m-box-uf"><label id="m-rotulo-uf">Estado</label><select id="m-uf"></select></div>
     </div>
     <div style="margin-bottom:14px"><label>Quantidade de leads</label><select id="m-qtd">
       <option>10</option><option selected>25</option><option>50</option></select></div>
@@ -192,7 +199,9 @@
     </label>
     <button class="primary" id="m-go" style="width:100%;padding:12px">Iniciar Mineração em Tempo Real</button>
     <p class="muted" style="margin:12px 0 0;font-size:11px">A busca leva de 15s a 90s: consulta a base pública,
-      testa a velocidade de cada site e calcula as oportunidades.</p>
+      testa a velocidade de cada site e calcula as oportunidades. Estado e país inteiro demoram
+      bem mais e, em segmento de volume alto, a base pública pode recusar por excesso de área —
+      nesse caso vá por cidade.</p>
   </div>
   <div id="mload" hidden>
     <div class="spin"></div>
@@ -208,7 +217,8 @@
   <div class="filters" id="filtros">
     <div><label>Busca livre</label><input id="q" placeholder="nome, CNAE, dor…"></div>
     <div><label>Nicho / Segmento</label><select id="nicho"><option value="">Todos</option></select></div>
-    <div><label>Estado</label><select id="uf"><option value="">Todos</option></select></div>
+    <div><label>País</label><select id="pais"><option value="">Todos</option></select></div>
+    <div><label>Estado / Região</label><select id="uf"><option value="">Todos</option></select></div>
     <div><label>Cidade</label><select id="cidade"><option value="">Todas</option></select></div>
     <div><label>Porte</label><select id="porte">
       <option value="">Todos</option><option>ME</option><option>EPP</option><option>MEDIA</option></select></div>
@@ -266,12 +276,14 @@
 
 <script>
 const $ = (s) => document.querySelector(s);
-const F = ['q','nicho','uf','cidade','porte','anos','oferta','prioridade','status','canal'];
+const F = ['q','nicho','pais','uf','cidade','porte','anos','oferta','prioridade','status','canal'];
 const STATUS = {novo:'Novo',contatado:'Contatado',reuniao:'Reunião',proposta:'Proposta',ganho:'Ganho',perdido:'Perdido'};
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const zap = (num, texto) => 'https://wa.me/55' + String(num).replace(/\D/g,'') +
+// o servidor manda o número já em E.164 (DDI do país minerado). Lead antigo é sempre BR.
+const zap = (l, texto) => 'https://wa.me/' + (l.whatsapp_e164 || '55' + l.whatsapp).replace(/\D/g,'') +
   (texto ? '?text=' + encodeURIComponent(texto) : '');
-let leads = [], todos = [], sel = new Set();
+let leads = [], todos = [], sel = new Set(), paises = [];
+const nomePais = (p) => paises.find((x) => x.id === (p ?? 'BR'))?.nome ?? (p ?? 'BR');
 
 // Estado do usuário mora no navegador: na Vercel a função é stateless e efêmera, então
 // status, leads minerados e exclusões só sobrevivem aqui. Local, o SQLite guarda em paralelo.
@@ -285,7 +297,7 @@ let descartados = new Set(LS.ler('descartados', []));
 // Onde parou a varredura de cada busca: { 'clinicas|curitiba|PR|1': 25 }. O servidor é stateless
 // (na Vercel, obrigatoriamente), então quem lembra a página é o navegador — igual ao resto do estado.
 let offsets = LS.ler('offsets', {});
-const chaveBusca = (b) => [b.nicho, b.cidade.toLowerCase(), b.uf, b.apenas_whatsapp ? 1 : 0].join('|');
+const chaveBusca = (b) => [b.pais, b.escopo, b.nicho, (b.cidade || '').toLowerCase(), b.estado, b.apenas_whatsapp ? 1 : 0].join('|');
 
 // a base virou 100% real: joga fora qualquer resíduo dos mocks antigos (CNPJ real vs. id do OSM)
 const real = (cnpj) => String(cnpj).startsWith('OSM-');
@@ -304,6 +316,7 @@ const filtrar = (lista) => {
   const txt = valor('q').toLowerCase().trim(), anos = Number(valor('anos') || 0);
   return lista.filter((l) =>
     (!valor('nicho') || l.nicho === valor('nicho')) &&
+    (!valor('pais') || (l.pais ?? 'BR') === valor('pais')) &&
     (!valor('uf') || l.uf === valor('uf')) &&
     (!valor('cidade') || l.cidade === valor('cidade')) &&
     (!valor('porte') || l.porte === valor('porte')) &&
@@ -328,11 +341,17 @@ function base() {
 
 function aplicar() {
   const b = base();
-  for (const [id, campo] of [['nicho', 'nicho'], ['uf', 'uf'], ['cidade', 'cidade']]) {
+  // opções dos filtros = o que existe na base agora (país inclusive: lead antigo é BR)
+  for (const [id, pega, rotulo] of [
+    ['nicho', (l) => l.nicho, (v) => v[0].toUpperCase() + v.slice(1)],
+    ['pais', (l) => l.pais ?? 'BR', nomePais],
+    ['uf', (l) => l.uf, (v) => v],
+    ['cidade', (l) => l.cidade, (v) => v],
+  ]) {
     const el = $('#'+id), atual = el.value;
     el.length = 1;
-    for (const v of [...new Set(b.map((l) => l[campo]))].sort())
-      el.add(new Option(v[0].toUpperCase() + v.slice(1), v));
+    for (const v of [...new Set(b.map(pega))].filter(Boolean).sort())
+      el.add(new Option(rotulo(v), v));
     el.value = atual;
   }
   leads = filtrar(b);
@@ -342,14 +361,35 @@ function aplicar() {
 async function carregar() {
   const d = await (await fetch('/api/leads')).json();
   todos = d.leads;
+  paises = d.facetas.paises;
   if (!$('#m-nicho').options.length) {
     for (const n of d.facetas.mineracao) $('#m-nicho').add(new Option(n.label, n.id));
     $('#m-nicho').selectedIndex = 0;
-    for (const u of d.facetas.estados) $('#m-uf').add(new Option(u, u));
-    $('#m-uf').value = 'PR';
+    for (const p of paises) $('#m-pais').add(new Option(p.nome, p.id));
+    $('#m-pais').value = 'BR';
+    trocarPais('PR');
   }
   aplicar();
 }
+
+// cada país tem sua lista de divisões — e nome diferente pra elas (estado, distrito, região)
+function trocarPais(inicial) {
+  const p = paises.find((x) => x.id === $('#m-pais').value);
+  $('#m-rotulo-uf').textContent = p.rotulo;
+  $('#m-uf').length = 0;
+  for (const [id, nome] of Object.entries(p.estados)) $('#m-uf').add(new Option(nome, id));
+  $('#m-uf').value = inicial && p.estados[inicial] ? inicial : Object.keys(p.estados)[0];
+  $('#m-cidade').placeholder = { BR: 'Curitiba', US: 'Austin', PT: 'Braga', GB: 'Brighton', IT: 'Bologna' }[p.id] ?? '';
+}
+
+// cidade só faz sentido no escopo cidade; a divisão, em tudo que não seja o país inteiro
+const escopoUI = () => {
+  const e = $('#m-escopo').value;
+  $('#m-box-cidade').hidden = e !== 'cidade';
+  $('#m-box-uf').hidden = e === 'pais';
+};
+$('#m-pais').onchange = () => trocarPais();
+$('#m-escopo').onchange = escopoUI;
 
 function render(total) {
   const alta = leads.filter(l => l.prioridade === 'Alta').length;
@@ -371,7 +411,7 @@ function render(total) {
     <td class="seg"><span class="pill">${esc(l.nicho)}</span><small class="web">${esc(l.cnae.split(' - ')[0])}</small></td>
     <td class="contato web">${l.telefone ? '☎ ' + esc(l.telefone) : '<span class="tag-nenhum">sem telefone</span>'}
         ${l.email ? `<br><a href="mailto:${esc(l.email)}">✉ ${esc(l.email)}</a>` : ''}</td>
-    <td class="cid">${esc(l.cidade)}<small class="web">${l.uf}</small></td>
+    <td class="cid">${esc(l.cidade || '—')}<small class="web">${esc([l.uf, l.pais && l.pais !== 'BR' ? l.pais : ''].filter(Boolean).join(' · '))}</small></td>
     <td class="pres web">${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">🌐 ${esc(l.site)}</a>
         <br><span class="tag-${l.site_status}">site ${l.site_status}</span>` : '<span class="tag-nenhum">sem site</span>'}
         ${l.instagram ? `<br>📷 ${esc(l.instagram)} (${l.seguidores.toLocaleString('pt-BR')})` : ''}</td>
@@ -381,7 +421,7 @@ function render(total) {
     <td class="st-td"><select class="st" data-cnpj="${l.cnpj}">${Object.entries(STATUS)
         .map(([v, t]) => `<option value="${v}" ${l.status===v?'selected':''}>${t}</option>`).join('')}</select></td>
     <td class="zapcol">${l.whatsapp
-      ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener"
+      ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank" rel="noopener"
            title="Abre o WhatsApp com o gancho já escrito">📱 ${l.whatsapp}</a>`
       : '<span class="semzap">sem WhatsApp</span>'}</td>
     <td class="del-td"><button class="del" data-cnpj="${l.cnpj}" title="Excluir este lead da base">🗑</button></td>
@@ -408,14 +448,14 @@ function raioX(l) {
         ? `${new Date(l.abertura).toLocaleDateString('pt-BR')} (${l.anos} anos de mercado)`
         : '<span class="muted">não disponível no cadastro público</span>'}</div>
       <span>Porte</span><div>${l.porte}${l.funcionarios ? ` · ${l.funcionarios} funcionários` : ''} · ${l.unidades} unidade(s)</div>
-      <span>Localização</span><div>${esc(l.cidade)} / ${l.uf}</div>
+      <span>Localização</span><div>${esc(l.cidade || '—')}${l.uf ? ' / ' + esc(l.uf) : ''} · ${esc(nomePais(l.pais))}</div>
       ${l.endereco ? `<span>Endereço</span><div>${esc(l.endereco)}</div>` : ''}
       ${l.horario ? `<span>Horário</span><div>${esc(l.horario)}</div>` : ''}
     </div>
 
     <h3>Contato</h3>
     <div class="kv">
-      <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
+      <span>WhatsApp</span><div>${l.whatsapp ? `<a class="zap btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank" rel="noopener">📱 ${l.whatsapp}</a>` : '<span class="muted">só telefone fixo</span>'}</div>
       <span>Telefone</span><div>${esc(l.telefone)}</div>
       <span>E-mail</span><div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>
       <span>Site</span><div>${l.site ? `<a href="https://${esc(l.site)}" target="_blank" rel="noopener">${esc(l.site)}</a> — <span class="tag-${l.site_status}">${l.site_status}</span>${
@@ -447,7 +487,7 @@ function raioX(l) {
       <button id="copiar">📋 Copiar gancho</button>
       <button id="copiar-fu">📋 Copiar follow-up</button>
       <button id="excluir-lead">🗑 Excluir lead</button>
-      ${l.whatsapp ? `<a class="btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l.whatsapp, l.gancho)}" target="_blank" rel="noopener" style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px">📱 Abrir WhatsApp com o gancho</a>` : ''}
+      ${l.whatsapp ? `<a class="btn-zap-lead" data-cnpj="${l.cnpj}" href="${zap(l, l.gancho)}" target="_blank" rel="noopener" style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px">📱 Abrir WhatsApp com o gancho</a>` : ''}
     </div>`;
   $('#copiar').onclick = async (e) => {
     await navigator.clipboard.writeText(l.gancho);
@@ -592,17 +632,21 @@ $('#mov').onclick = (e) => e.target === $('#mov') && $('#mfechar').click();
 
 $('#m-go').onclick = async () => {
   const marcados = [...$('#m-nicho').selectedOptions];
-  const cidade = $('#m-cidade').value.trim(), uf = $('#m-uf').value;
+  const pais = $('#m-pais').value, escopo = $('#m-escopo').value;
+  const cidade = escopo === 'cidade' ? $('#m-cidade').value.trim() : '';
+  const estado = escopo === 'pais' ? '' : $('#m-uf').value;
+  const onde = escopo === 'cidade' ? `${cidade}/${estado}` : escopo === 'estado'
+    ? `${$('#m-uf').selectedOptions[0].text} (${nomePais(pais)})` : nomePais(pais);
   const apenas_whatsapp = $('#m-wpp').checked, quantidade = Number($('#m-qtd').value);
   if (!marcados.length) return $('#m-nicho').focus();
-  if (!cidade) return $('#m-cidade').focus();
+  if (escopo === 'cidade' && !cidade) return $('#m-cidade').focus();
   LS.gravar('so_wpp', apenas_whatsapp);   // a escolha vale pras próximas minerações
   $('#mform').hidden = true; $('#mload').hidden = false;
   const linhas = [], adicionados = [];
   let falha = null;
   // Serial de propósito: o Overpass é base pública e limita requisições em paralelo.
   for (const [i, opt] of marcados.entries()) {
-    const body = { nicho: opt.value, cidade, uf, quantidade, apenas_whatsapp };
+    const body = { nicho: opt.value, pais, escopo, estado, cidade, quantidade, apenas_whatsapp };
     const kBusca = chaveBusca(body);
     body.offset = offsets[kBusca] ?? 0;            // cada segmento tem seu próprio cursor
     const pre = marcados.length > 1 ? `[${i + 1}/${marcados.length}] ${opt.text} · ` : '';
@@ -623,7 +667,7 @@ $('#m-go').onclick = async () => {
       minerados = [...novos, ...minerados];
       linhas.push(`<b>${esc(opt.text)}</b>: ${!d.encontrados
         ? (body.offset ? `fim da fila — os ${d.disponiveis} estabelecimentos já foram varridos (recomeça do início na próxima)`
-                       : 'nada encontrado nessa cidade/segmento')
+                       : 'nada encontrado nessa região/segmento')
         : `${novos.length} novos · ${d.encontrados - novos.length} já na base · ${d.offset + 1}–${d.offset + d.encontrados} de ${d.disponiveis}`}`);
     } catch (e) { falha = e; break; }
   }
@@ -634,9 +678,10 @@ $('#m-go').onclick = async () => {
   LS.gravar('offsets', offsets);
   const bloco = (cls, html) => $('#modal').insertAdjacentHTML('beforeend', `<div class="${cls}">${html}</div>`);
   if (falha) bloco('err', `Falha ao minerar: ${esc(falha.message)}<br>
-    <span class="muted">Confira o nome exato da cidade e a UF, ou tente de novo — a base pública às vezes limita requisições.${
+    <span class="muted">Confira o nome exato da cidade, ou tente de novo — a base pública às vezes limita
+      requisições (e recusa área grande demais em segmento de volume alto).${
       adicionados.length ? ` Os ${adicionados.length} leads dos segmentos anteriores já foram salvos.` : ''}</span>`);
-  if (!adicionados.length && !falha) bloco('err', `Nenhuma empresa nova em <b>${esc(cidade)}/${uf}</b>.
+  if (!adicionados.length && !falha) bloco('err', `Nenhuma empresa nova em <b>${esc(onde)}</b>.
     <br><span class="muted">${linhas.join('<br>')}${apenas_whatsapp
       ? '<br>Desmarque "Apenas empresas com WhatsApp" para incluir quem só publica telefone fixo.' : ''}</span>`);
   if (adicionados.length) {
@@ -663,6 +708,7 @@ const CSV_COLS = [
   ['Contato', (l) => l.whatsapp || l.telefone],
   ['Segmento', (l) => l.nicho],
   ['Cidade', (l) => l.cidade],
+  ['País', (l) => nomePais(l.pais)],
   ['Presença digital', (l) => [
     l.site ? `site: ${l.site} (${l.site_status})` : 'sem site',
     l.instagram && `instagram: ${l.instagram}`,

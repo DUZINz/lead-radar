@@ -20,7 +20,9 @@ const chamar = async (method, url, body) => {
 const leads = await chamar('GET', '/api/leads');
 assert.equal(leads.json.total, 0, 'base começa vazia no serverless: sem mock, sem banco');
 assert.ok(leads.json.facetas.mineracao.length >= 10, 'catálogo de mineração exposto');
-assert.ok(leads.json.facetas.estados.includes('PR'), 'UFs disponíveis para minerar');
+const br = leads.json.facetas.paises.find((p) => p.id === 'BR');
+assert.equal(leads.json.facetas.paises.length, 5, 'os 5 países ligados chegam na tela');
+assert.ok(br.estados.PR === 'Paraná', 'UFs disponíveis para minerar');
 
 // escrita vira no-op: quem persiste no serverless é o localStorage do navegador
 assert.deepEqual((await chamar('POST', '/api/status', { cnpj: 'X', status: 'contatado' })).json, { ok: true });
