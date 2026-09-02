@@ -258,9 +258,18 @@ function areasAlvo(p, { escopo, estado, cidade }) {
   return q;
 }
 
+// "restaurantes nos EUA inteiro" não é uma consulta lenta: é uma consulta que a base pública
+// não termina nunca. Quando ela desiste, o jeito é diminuir a área — não tentar de novo.
+// `fatal`: não adianta tentar o outro espelho nem outro admin_level — a área é que é grande demais
+const GRANDE_DEMAIS = (escopo, seg) => Object.assign(new Error(
+  `A base pública desistiu da consulta depois de ${seg}s — a área é grande demais para esse segmento. ` +
+  (escopo === 'pais' ? 'Busque por estado/região, ou escolha um segmento de volume menor.'
+                     : 'Busque por cidade, ou escolha um segmento de volume menor.')), { fatal: true });
+
 async function overpass(cat, regiao, bruto) {
   const p = PAISES[regiao.pais];
-  const espera = TIMEOUT[regiao.escopo];
+  // na Vercel a function morre em 60s: pedir 180s ao Overpass só faria o usuário esperar por nada
+  const espera = Math.min(TIMEOUT[regiao.escopo], SERVERLESS ? 50 : 180);
 
   let erro;
   for (const areas of areasAlvo(p, regiao)) {
@@ -277,19 +286,26 @@ out center tags ${bruto};
         let dados;
         // sob carga o Overpass responde XML/HTML de rate limit em vez de JSON
         try { dados = JSON.parse(txt); } catch {
+          // 504/500 numa área grande é a consulta estourando, não a base ocupada
+          if (r.status >= 500 && regiao.escopo !== 'cidade') throw GRANDE_DEMAIS(regiao.escopo, espera);
           erro = new Error(/rate|too many|slot|load/i.test(txt)
             ? 'Base pública ocupada no momento (limite de requisições) — tente de novo em alguns segundos'
             : `Resposta inválida da base pública (HTTP ${r.status})`);
           continue;
         }
         if (!r.ok) { erro = new Error(`Overpass ${r.status}`); continue; }
+        // Consulta estourada volta com HTTP 200, elements vazio e o motivo só no `remark`.
+        // Sem olhar aqui, a busca impossível era reportada como "nada encontrado na região".
+        if (/timed out|out of memory|runtime error/i.test(dados.remark ?? ''))
+          throw GRANDE_DEMAIS(regiao.escopo, espera);
         const els = dados.elements ?? [];
         // a área sempre volta (para pegar o nome canônico do município); só conta POI de verdade
         if (els.some((e) => e.type !== 'area')) return els;
         erro = null;
         break;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
-      } catch (e) { erro = e; }
+      } catch (e) { erro = e; if (e.fatal) break; }
     }
+    if (erro?.fatal) break;
   }
   if (erro) throw erro;
   return [];
@@ -545,7 +561,8 @@ export default async function handler(req, res) {
           nichos: [...new Set(LEADS.map((l) => l.nicho))].sort(),
           ufs: [...new Set(LEADS.map((l) => l.uf))].sort(),
           cidades: [...new Set(LEADS.map((l) => l.cidade))].sort(),
-          mineracao: Object.entries(CATALOGO).map(([id, c]) => ({ id, label: c.label })),
+          // `volume` é o que a tela usa pra avisar antes de mandar uma busca nacional impossível
+          mineracao: Object.entries(CATALOGO).map(([id, c]) => ({ id, label: c.label, volume: c.volume })),
           // o que a tela precisa saber de cada país: como chamar a divisão e quais existem
           paises: Object.entries(PAISES).map(([id, p]) =>
             ({ id, nome: p.nome, rotulo: p.rotulo, estados: p.estados })),

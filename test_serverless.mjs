@@ -38,4 +38,18 @@ assert.match(eco.json.erro, /inexistente/, 'body chega parseado');
 const viaBody = await chamar('POST', '/api/status', { cnpj: 'São José/Ç', status: 'novo' });
 assert.deepEqual(viaBody.json, { ok: true }, 'cnpj com acento não quebra o parse');
 
+// Consulta estourada volta HTTP 200 com elements vazio e o motivo só no `remark` — sem olhar
+// ali, "restaurantes nos EUA inteiro" era reportado como "nada encontrado" em vez de área grande.
+const realFetch = globalThis.fetch;
+let chamadas = 0;
+globalThis.fetch = async () => {
+  chamadas++;
+  return new Response(JSON.stringify({ elements: [], remark: 'runtime error: Query timed out in "query" at line 3 after 91 seconds.' }),
+    { status: 200, headers: { 'content-type': 'application/json' } });
+};
+const estourou = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'US', escopo: 'pais' });
+assert.match(estourou.json.erro, /grande demais/, 'timeout de consulta não pode virar "nada encontrado"');
+assert.equal(chamadas, 1, 'área grande demais não se resolve tentando o outro espelho');
+globalThis.fetch = realFetch;
+
 console.log('ok — handler serverless (sem disco, sem SQLite)');
