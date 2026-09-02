@@ -113,9 +113,12 @@ e **Itália** (20 regiões) — cada um em cidade, estado/região ou país intei
 italiano (`copy.mjs`), escolhidas pelo campo `idioma` do lead. Lead antigo, sem o campo, continua em pt.
 O link do WhatsApp vem pronto do servidor em E.164 (`whatsapp_e164`), com o DDI do país.
 
-País inteiro é ordens de grandeza mais caro que cidade: o timeout do Overpass sobe pra 180s (60s pra
-cidade) e, em segmento de volume alto, a base pública pode recusar — aí é ir por cidade. Na Vercel o
-teto da function é 60s, então busca nacional pesada só roda local.
+**País inteiro é varredura estado a estado**, não uma consulta nacional: a base pública não termina
+uma varredura de país para segmento pesado (academias nos EUA = 50k+ POIs, a consulta estoura).
+O servidor percorre a lista de estados do país na ordem, para quando a página enche, e o cursor
+guarda em que estado continuar — cada mineração segue de onde a anterior parou até fechar o país.
+Estado grande demais para o segmento (restaurantes na Califórnia) é pulado e reportado, não derruba
+a busca. Orçamento de tempo: 25s na Vercel (a function morre em 60s), 90s local.
 
 Órgão público (UBS, prefeitura, city hall, comune, NHS, site `.gov`) é descartado — não é lead B2B.
 O município é gravado com o nome canônico do OSM, então digitar "Florianopolis" não cria uma cidade

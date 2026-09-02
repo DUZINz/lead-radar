@@ -393,13 +393,17 @@ const escopoUI = () => {
   const e = $('#m-escopo').value;
   $('#m-box-cidade').hidden = e !== 'cidade';
   $('#m-box-uf').hidden = e === 'pais';
-  // segmento de volume alto em área grande a base pública não termina — avisar antes dos 3 min
+  // país inteiro é varredura estado a estado; num estado só, segmento pesado ainda pode estourar
   const pesados = [...$('#m-nicho').selectedOptions].filter((o) => o.dataset.volume === 'alto');
-  $('#m-aviso').hidden = e === 'cidade' || !pesados.length;
-  $('#m-aviso').innerHTML = pesados.length ? `⚠️ <b>${esc(pesados.map((o) => o.text).join(', '))}</b>
-    ${pesados.length > 1 ? 'são segmentos' : 'é um segmento'} de volume alto:
-    ${e === 'pais' ? 'no país inteiro' : 'num estado/região grande'} a base pública costuma desistir
-    da consulta antes de responder. Se falhar, reduza a área.` : '';
+  $('#m-aviso').hidden = e === 'cidade' || (e === 'estado' && !pesados.length);
+  $('#m-aviso').innerHTML = e === 'pais'
+    ? `🌎 <b>País inteiro</b> varre um ${esc($('#m-rotulo-uf').textContent.toLowerCase())} por vez, na ordem
+       da lista: a base pública não entrega um país inteiro de uma vez. Cada mineração continua de
+       onde a anterior parou, até fechar o país.`
+    : pesados.length ? `⚠️ <b>${esc(pesados.map((o) => o.text).join(', '))}</b>
+       ${pesados.length > 1 ? 'são segmentos' : 'é um segmento'} de volume alto: num
+       ${esc($('#m-rotulo-uf').textContent.toLowerCase())} grande a base pública pode desistir da
+       consulta. Se falhar, busque por cidade.` : '';
 };
 $('#m-pais').onchange = () => trocarPais();
 $('#m-escopo').onchange = escopoUI;
@@ -679,10 +683,17 @@ $('#m-go').onclick = async () => {
       const novos = d.leads.filter(l => !conhecidos.has(l.cnpj) && !descartados.has(l.cnpj));
       adicionados.push(...novos);
       minerados = [...novos, ...minerados];
+      // na varredura nacional o cursor é o estado, não a posição na fila: o relato muda
+      const onde = d.escopo === 'pais'
+        ? `varreu ${esc(d.varridos.join(', ')) || 'nenhum estado novo'}${d.pulados.length
+            ? ` · pulou ${esc(d.pulados.join(', '))} (grande demais pro segmento)` : ''}${
+            d.esgotado ? ' · país completo, recomeça do início' : ''}`
+        : `${d.offset + 1}–${d.offset + d.encontrados} de ${d.disponiveis}`;
       linhas.push(`<b>${esc(opt.text)}</b>: ${!d.encontrados
-        ? (body.offset ? `fim da fila — os ${d.disponiveis} estabelecimentos já foram varridos (recomeça do início na próxima)`
-                       : 'nada encontrado nessa região/segmento')
-        : `${novos.length} novos · ${d.encontrados - novos.length} já na base · ${d.offset + 1}–${d.offset + d.encontrados} de ${d.disponiveis}`}`);
+        ? (d.escopo === 'pais' ? `${onde}${d.esgotado ? '' : ' — clique de novo pra seguir pro próximo'}`
+           : body.offset ? `fim da fila — os ${d.disponiveis} estabelecimentos já foram varridos (recomeça do início na próxima)`
+                         : 'nada encontrado nessa região/segmento')
+        : `${novos.length} novos · ${d.encontrados - novos.length} já na base · ${onde}`}`);
     } catch (e) { falha = e; break; }
   }
   timers.forEach(clearTimeout);

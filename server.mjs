@@ -268,8 +268,9 @@ const GRANDE_DEMAIS = (escopo, seg) => Object.assign(new Error(
 
 async function overpass(cat, regiao, bruto) {
   const p = PAISES[regiao.pais];
-  // na Vercel a function morre em 60s: pedir 180s ao Overpass só faria o usuário esperar por nada
-  const espera = Math.min(TIMEOUT[regiao.escopo], SERVERLESS ? 50 : 180);
+  // na Vercel a function morre em 60s: pedir 180s ao Overpass só faria o usuário esperar por nada.
+  // `regiao.espera` é a varredura nacional pedindo menos por estado — ela tem vários pra fazer.
+  const espera = Math.min(regiao.espera ?? TIMEOUT[regiao.escopo], SERVERLESS ? 50 : 180);
 
   let erro;
   for (const areas of areasAlvo(p, regiao)) {
@@ -407,20 +408,52 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   // Pedir mais no `out` do Overpass custa pouco — o caro é resolver a área e testar os sites,
   // e o teste de site continua limitado a `limite`. (celular é tag rara: com WhatsApp varre o dobro)
   const bruto = apenas_whatsapp ? 800 : 400;
+  const util = (e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags);
 
-  const brutos = await overpass(cat, regiao, bruto);
-  // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
-  // uma cidade separada de "Florianópolis" na base. Em busca por estado/país a área
-  // resolvida é o estado/país — aí a cidade de cada lead só pode vir do endereço dele.
-  const municipio = escopo === 'cidade' ? (brutos.find((e) => e.type === 'area')?.tags?.name || cidade) : '';
+  let municipio = '', candidatos, ranqueados, elementos, esgotado, proximo;
+  const varridos = [], pulados = [];
 
-  const candidatos = brutos.filter((e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags));
-  const ranqueados = ranquear(candidatos, apenas_whatsapp, pais);
-  const elementos = ranqueados.slice(inicio, alvo);     // a "página" pedida desta varredura
-  // ponytail: `bruto` limita o `out` do Overpass, então esgotado pode ser falso positivo quando
-  // a página bate exatamente no teto de 800. Só importa em cidade gigante — paginar no Overpass
-  // (por bbox) se um dia virar problema de verdade.
-  const esgotado = inicio + elementos.length >= ranqueados.length;
+  if (escopo === 'pais') {
+    // País inteiro NÃO cabe numa consulta só: academias nos EUA são 50k+ POIs e a base pública
+    // desiste antes de responder. Então a varredura nacional é estado a estado, na ordem da
+    // lista, parando quando a página encheu — e o cursor guarda em que estado continuar.
+    const lista = Object.keys(p.estados);
+    const ateQuando = Date.now() + (SERVERLESS ? 25000 : 90000);
+    let i = inicio < lista.length ? inicio : 0;
+    const achados = [];
+    while (i < lista.length) {
+      try {
+        const brutos = await overpass(cat, { pais, escopo: 'estado', estado: lista[i], espera: 45 }, bruto);
+        // o estado varrido é a UF do lead: melhor que addr:state, que quase nunca vem preenchido
+        achados.push(...brutos.filter(util).map((e) => ({ ...e, estado: lista[i] })));
+        varridos.push(lista[i]);
+      } catch (e) {
+        if (!e.fatal) throw e;      // rate limit e afins continuam sendo erro de verdade
+        pulados.push(lista[i]);     // estado grande demais pro segmento: segue pro próximo
+      }
+      i++;
+      if (ranquear(achados, apenas_whatsapp, pais).length >= limite || Date.now() > ateQuando) break;
+    }
+    candidatos = achados;
+    ranqueados = ranquear(candidatos, apenas_whatsapp, pais);
+    elementos = ranqueados.slice(0, limite);
+    esgotado = i >= lista.length;
+    proximo = esgotado ? 0 : i;     // próxima mineração continua no estado seguinte
+  } else {
+    const brutos = await overpass(cat, regiao, bruto);
+    // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
+    // uma cidade separada de "Florianópolis" na base. Em busca por estado a área resolvida
+    // é o estado — aí a cidade de cada lead só pode vir do endereço dele.
+    municipio = escopo === 'cidade' ? (brutos.find((e) => e.type === 'area')?.tags?.name || cidade) : '';
+    candidatos = brutos.filter(util);
+    ranqueados = ranquear(candidatos, apenas_whatsapp, pais);
+    elementos = ranqueados.slice(inicio, alvo);     // a "página" pedida desta varredura
+    // ponytail: `bruto` limita o `out` do Overpass, então esgotado pode ser falso positivo quando
+    // a página bate exatamente no teto de 800. Só importa em cidade gigante — paginar no Overpass
+    // (por bbox) se um dia virar problema de verdade.
+    esgotado = inicio + elementos.length >= ranqueados.length;
+    proximo = esgotado ? 0 : inicio + elementos.length;
+  }
 
   // Serverless: a memória da instância não é a base do usuário — deduplicar aqui esconderia
   // leads que o navegador dele nunca recebeu. Lá quem deduplica é o cliente (localStorage).
@@ -439,7 +472,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
       nicho: cat.nicho,
       cnae: cat.label,
       cidade: t['addr:city'] || t['addr:town'] || t['addr:village'] || municipio,
-      uf: escopo === 'pais' ? (t['addr:state'] || '') : estado,
+      uf: e.estado ?? estado,                  // na varredura nacional, o estado que a produziu
       pais,
       idioma: p.idioma,                        // define em que língua sai o gancho (copy.mjs)
       porte: 'N/D',
@@ -486,7 +519,9 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   // proximo_offset volta pro cliente, que o guarda por busca e devolve na próxima mineração.
   // Quando esgotou, zera: o OSM ganha POI novo com o tempo e a dedupe segura o repetido.
   return { sucesso: true, encontrados: leads.length, novos: novos.length, analisados: candidatos.length,
-    apenas_whatsapp, offset: inicio, proximo_offset: esgotado ? 0 : inicio + elementos.length,
+    apenas_whatsapp, offset: inicio, proximo_offset: proximo, escopo,
+    // varredura nacional: por quais estados passou e quais teve que pular (grandes demais)
+    varridos: varridos.map((e) => p.estados[e]), pulados: pulados.map((e) => p.estados[e]),
     esgotado, disponiveis: ranqueados.length, leads: novos.map((l) => enriquecer(l)) };
 }
 

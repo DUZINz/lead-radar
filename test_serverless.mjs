@@ -47,9 +47,16 @@ globalThis.fetch = async () => {
   return new Response(JSON.stringify({ elements: [], remark: 'runtime error: Query timed out in "query" at line 3 after 91 seconds.' }),
     { status: 200, headers: { 'content-type': 'application/json' } });
 };
-const estourou = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'US', escopo: 'pais' });
+const estourou = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'US', escopo: 'estado', estado: 'CA' });
 assert.match(estourou.json.erro, /grande demais/, 'timeout de consulta não pode virar "nada encontrado"');
 assert.equal(chamadas, 1, 'área grande demais não se resolve tentando o outro espelho');
+
+// país inteiro é varredura estado a estado: um estado que estoura é pulado, não derruba a busca
+chamadas = 0;
+const nacional = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'US', escopo: 'pais' });
+assert.ok(!nacional.json.erro, 'estado que estoura não pode derrubar a varredura nacional');
+assert.equal(nacional.json.pulados.length, 51, 'os 51 estados foram tentados e reportados');
+assert.equal(chamadas, 51, 'um pedido por estado, sem repetir espelho');
 globalThis.fetch = realFetch;
 
 console.log('ok — handler serverless (sem disco, sem SQLite)');
