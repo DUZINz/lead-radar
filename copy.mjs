@@ -303,3 +303,56 @@ const lang = (l) => IDIOMAS[l?.idioma] ?? PT;      // sem idioma = lead antigo, 
 const OFERTAS = ['erp', 'ia', 'mobile', 'api', 'web'];
 export const GANCHOS = Object.fromEntries(OFERTAS.map((id) => [id, (l) => lang(l).ganchos[id](l)]));
 export const FOLLOWUPS = Object.fromEntries(OFERTAS.map((id) => [id, (l) => lang(l).followups[id](l)]));
+
+// ---------------- e-mail (o canal do lead estrangeiro) ----------------
+// Nos EUA/Inglaterra o cadastro público não diz se o número é celular e ninguém tagueia
+// WhatsApp: sobra o e-mail. Só que e-mail não é WhatsApp — não tem "pode mandar?" garantido,
+// então o que lá seria a 2a mensagem já vai junto aqui, e a pergunta do gancho desce pro fim,
+// que é onde o CTA é lido. Zero copy nova: monta gancho + follow-up, só troca a costura.
+const EMAIL = {
+  pt: {
+    assunto: {
+      erp:    (l) => `${curto(l.nome)} — um sistema no lugar de sete`,
+      ia:     (l) => `${curto(l.nome)} — quem manda mensagem às 22h`,
+      mobile: (l) => `${curto(l.nome)} — o cliente agendando sozinho`,
+      api:    (l) => `${curto(l.nome)} — o mesmo dado digitado duas vezes`,
+      web:    (l) => `${curto(l.nome)} — quem procura ${String(l.cnae || 'seu serviço').toLowerCase()} no Google`,
+    },
+    ponte: 'Pra você não precisar responder só pra saber do que se trata, já deixo os 3 pontos principais:',
+    saida: 'Se não for do seu interesse, é só responder "remover" que eu não escrevo de novo.',
+  },
+  en: {
+    assunto: {
+      erp:    (l) => `${curto(l.nome)} — one system instead of seven`,
+      ia:     (l) => `${curto(l.nome)} — the enquiry that lands at 10pm`,
+      mobile: (l) => `${curto(l.nome)} — letting customers book themselves`,
+      api:    (l) => `${curto(l.nome)} — the same data typed twice`,
+      web:    (l) => `${curto(l.nome)} — who finds ${String(l.cnae || 'your service').toLowerCase()} on Google`,
+    },
+    ponte: 'So you do not have to reply just to find out what this is about, here are the three main points:',
+    saida: 'If this is not for you, just reply "remove" and I will not write again.',
+  },
+  it: {
+    assunto: {
+      erp:    (l) => `${curto(l.nome)} — un sistema al posto di sette`,
+      ia:     (l) => `${curto(l.nome)} — il messaggio che arriva alle 22`,
+      mobile: (l) => `${curto(l.nome)} — il cliente che prenota da solo`,
+      api:    (l) => `${curto(l.nome)} — lo stesso dato inserito due volte`,
+      web:    (l) => `${curto(l.nome)} — chi cerca ${String(l.cnae || 'il suo servizio').toLowerCase()} su Google`,
+    },
+    ponte: 'Per non farle perdere tempo a chiedere di cosa si tratta, le lascio subito i tre punti principali:',
+    saida: 'Se non le interessa, risponda "rimuovere" e non le scriverò più.',
+  },
+};
+
+export const EMAILS = Object.fromEntries(OFERTAS.map((id) => [id, (l) => {
+  const t = EMAIL[l?.idioma] ?? EMAIL.pt;
+  const blocos = GANCHOS[id](l).split('\n\n');
+  const pergunta = blocos.pop();                          // vira o CTA, no fim
+  const pontos = FOLLOWUPS[id](l).split('\n\n').slice(1);  // fora o "Fechado!", que só existe depois de resposta
+  return {
+    assunto: t.assunto[id](l),
+    // *negrito* é markup de WhatsApp: em cliente de e-mail vira sujeira na tela
+    corpo: monta(...blocos, t.ponte, ...pontos, pergunta, `— ${EU}`, t.saida).replace(/\*/g, ''),
+  };
+}]));

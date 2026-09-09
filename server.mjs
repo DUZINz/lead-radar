@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
-import { GANCHOS, FOLLOWUPS } from './copy.mjs';
+import { GANCHOS, FOLLOWUPS, EMAILS } from './copy.mjs';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5173;
@@ -145,6 +145,7 @@ export function enriquecer(l, status) {
       ? 'Alta' : top.score >= 35 ? 'Média' : 'Baixa',
     gancho: OFERTAS[top.id].gancho(l),
     followup: FOLLOWUPS[top.id](l),        // 2a mensagem: quando o lead responde "pode mandar"
+    email_msg: EMAILS[top.id](l),          // assunto + corpo pro canal de quem não tem WhatsApp
     status: status ?? 'novo',
   };
 }

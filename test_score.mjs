@@ -132,3 +132,27 @@ assert.equal(e({ ...eua, telefone: '(415) 555-1234' }).prioridade, 'Alta', 'tele
 assert.equal(e({ ...eua, telefone: '', email: '' }).prioridade, 'Média', 'lead americano sem contato nenhum não é Alta');
 
 console.log('ok — motor, copy curta (<250) nos 3 idiomas, telefone por país e paginação');
+
+// ---- e-mail: o canal do lead estrangeiro ----
+// O e-mail não tem "pode mandar?" — ou a 1a mensagem entrega o valor inteiro, ou não há 2a.
+// Aqui trava o que quebra campanha inteira: assunto vazio (vai pra spam), markup de WhatsApp
+// vazando na tela, e sumiço da saída (responder "remover") — que é o que segura CAN-SPAM/GDPR.
+const { EMAILS } = await import('./copy.mjs');
+for (const idioma of Object.keys(IDIOMAS)) {
+  for (const [oferta, montar] of Object.entries(EMAILS)) {
+    const { assunto, corpo } = montar({ ...base, idioma });
+    assert.ok(assunto.length > 10 && assunto.length < 80, `assunto ${oferta}/${idioma}: ${assunto.length} chars`);
+    assert.ok(!/\n/.test(assunto), `assunto ${oferta}/${idioma} não pode ter quebra de linha`);
+    assert.ok(assunto.includes(base.nome), `assunto ${oferta}/${idioma} sem o nome da empresa`);
+    assert.ok(!corpo.includes('*'), `corpo ${oferta}/${idioma} vazou negrito de WhatsApp`);
+    assert.ok(!/^Fechado!|^Great!|^Perfetto!/m.test(corpo), `corpo ${oferta}/${idioma} responde a algo que ninguém perguntou`);
+    assert.ok(corpo.includes('portfolio-murex-alpha-23.vercel.app'), `corpo ${oferta}/${idioma} sem portfólio`);
+    assert.ok(/remover|remove|rimuovere/.test(corpo), `corpo ${oferta}/${idioma} sem saída para o lead`);
+    assert.ok(corpo.length > 800, `corpo ${oferta}/${idioma} curto demais para ser a única mensagem`);
+  }
+}
+
+// o motor entrega o e-mail pronto junto do gancho
+const gringo = e({ nome: 'Rossi Studio', pais: 'IT', idioma: 'it', email: 'a@b.it', site: '', site_status: 'nenhum' });
+assert.ok(gringo.email_msg.assunto.startsWith('Rossi Studio —'), 'assunto no idioma do lead');
+assert.match(gringo.email_msg.corpo, /^Buongiorno!/, 'corpo no idioma do lead');
