@@ -116,6 +116,10 @@
     border:1px solid rgba(37,211,102,.45);color:#25d366;border-radius:6px;padding:3px 8px;
     font-size:12px;font-weight:600;white-space:nowrap}
   .zap:hover{background:rgba(37,211,102,.26);text-decoration:none}
+  .zap.mail{background:rgba(61,139,255,.14);border-color:rgba(61,139,255,.45);color:var(--acc-2)}
+  .zap.mail:hover{background:rgba(61,139,255,.26)}
+  .zap.tel{background:rgba(93,112,133,.14);border-color:rgba(93,112,133,.45);color:var(--baixa)}
+  .zap.tel:hover{background:rgba(93,112,133,.26)}
   #toast{position:fixed;top:74px;left:50%;transform:translate(-50%,-18px);z-index:80;
     background:rgba(10,26,20,.97);border:1px solid rgba(37,211,102,.55);color:#25d366;
     border-radius:10px;padding:12px 18px;font-size:13px;text-align:center;line-height:1.5;
@@ -154,6 +158,10 @@
     td.zapcol .zap{display:flex;justify-content:center;background:#25d366;border-color:#25d366;
       color:#04140e;font-size:15px;font-weight:700;padding:14px;border-radius:10px}
     td.zapcol .zap:hover{background:#25d366}
+    td.zapcol .zap.mail{background:var(--acc-2);border-color:var(--acc-2)}
+    td.zapcol .zap.mail:hover{background:var(--acc-2)}
+    td.zapcol .zap.tel{background:var(--baixa);border-color:var(--baixa)}
+    td.zapcol .zap.tel:hover{background:var(--baixa)}
     .semzap{display:block;text-align:center;font-size:12px;color:var(--dim);
       border:1px dashed var(--line);border-radius:10px;padding:12px}
     tbody tr.vazio{padding:26px;text-align:center}
@@ -235,6 +243,7 @@
       <option>Alta</option><option>Média</option><option>Baixa</option></select></div>
     <div><label>Canal de contato</label><select id="canal"><option value="">Todos</option>
       <option value="whatsapp">📱 Apenas com WhatsApp</option>
+      <option value="email">✉ Apenas com e-mail</option>
       <option value="site">🌐 Apenas com site</option>
       <option value="sem-site">❌ Sem site</option></select></div>
     <div><label>Status prospecção</label><select id="status"><option value="">Todos</option>
@@ -295,15 +304,17 @@ const mailto = (l) => `mailto:${encodeURIComponent(l.email)}?subject=${encodeURI
 // pronto, ou a ligação. Fingir WhatsApp lá dava "o número não está no WhatsApp" em todo clique.
 const acao = (l, grande) => {
   const cls = grande ? 'btn-zap-lead' : 'zap btn-zap-lead';
-  const est = grande ? ' style="display:inline-block;background:#25d366;border:1px solid #25d366;color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px"' : '';
+  // cor por canal: verde é a marca do WhatsApp (não o acento genérico da UI), então só a
+  // ação de WhatsApp pode usá-lo — e-mail e telefone com a mesma cor passavam por WhatsApp.
+  const est = (cor) => grande ? ` style="display:inline-block;background:${cor};border:1px solid ${cor};color:#04140e;font-weight:600;border-radius:8px;padding:8px 14px;font-size:13px"` : '';
   const wa = l.whatsapp ? `<a class="${cls}" data-cnpj="${l.cnpj}" data-canal="zap" href="${zap(l, l.gancho)}" target="_blank"
-    rel="noopener"${est} title="Abre o WhatsApp com o gancho já escrito">📱 ${grande ? 'Abrir WhatsApp com o gancho' : esc(l.whatsapp)}</a>` : '';
+    rel="noopener"${est('#25d366')} title="Abre o WhatsApp com o gancho já escrito">📱 ${grande ? 'Abrir WhatsApp com o gancho' : esc(l.whatsapp)}</a>` : '';
   // o e-mail some quando NÃO há e-mail — não quando há WhatsApp. Lead estrangeiro com os dois
   // é exatamente onde o e-mail entrega, então os dois botões convivem.
-  const mail = l.email ? `<a class="${cls}" data-cnpj="${l.cnpj}" data-canal="email" href="${mailto(l)}"${est}
+  const mail = l.email ? `<a class="${cls} mail" data-cnpj="${l.cnpj}" data-canal="email" href="${mailto(l)}"${est('var(--acc-2)')}
     title="Abre o e-mail com assunto e mensagem já escritos">✉ ${grande ? 'Abrir e-mail com a mensagem' : 'E-mail'}</a>` : '';
   if (wa || mail) return [wa, mail].filter(Boolean).join(' ');
-  if (l.telefone) return `<a class="zap" href="tel:${esc((l.telefone_e164 || l.telefone).replace(/[^\d+]/g,''))}"${est}
+  if (l.telefone) return `<a class="zap tel" href="tel:${esc((l.telefone_e164 || l.telefone).replace(/[^\d+]/g,''))}"${est('var(--baixa)')}
     title="Sem WhatsApp nem e-mail no cadastro — resta ligar">☎ ${esc(l.telefone)}</a>`;
   return grande ? '' : '<span class="semzap">sem contato direto</span>';
 };
@@ -354,7 +365,7 @@ const filtrar = (lista) => {
     (!valor('oferta') || l.oferta === valor('oferta')) &&
     (!valor('prioridade') || l.prioridade === valor('prioridade')) &&
     (!valor('status') || l.status === valor('status')) &&
-    ({'': true, whatsapp: !!l.whatsapp, site: !!l.site, 'sem-site': !l.site }[valor('canal')] ?? true) &&
+    ({'': true, whatsapp: !!l.whatsapp, email: !!l.email, site: !!l.site, 'sem-site': !l.site }[valor('canal')] ?? true) &&
     // lead minerado não tem data de abertura (anos = null): nunca pode ser escondido por esse filtro
     (!anos || l.anos === null || l.anos >= anos) &&
     (!txt || [l.nome, l.razao_social, l.cidade, l.cnae, l.obs].join(' ').toLowerCase().includes(txt)))
