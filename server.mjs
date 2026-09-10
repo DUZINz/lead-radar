@@ -280,6 +280,10 @@ async function overpass(cat, regiao, bruto) {
   const p = PAISES[regiao.pais];
   // na Vercel a function morre em 60s: pedir 180s ao Overpass só faria o usuário esperar por nada.
   // `regiao.espera` é a varredura nacional pedindo menos por estado — ela tem vários pra fazer.
+  // ponytail: 2 espelhos tentados em sequência somam até 2×(espera-5)s numa query cidade/estado
+  // só — com o teto de 50 isso chega perto dos 60s da function (mirror caído = timeout sem JSON).
+  // Não apertei aqui pra não mudar o comportamento de buscas legítimas e lentas; se acontecer,
+  // baixe este teto (ex.: 25) ou pare de tentar o 2º espelho quando SERVERLESS.
   const espera = Math.min(regiao.espera ?? TIMEOUT[regiao.escopo], SERVERLESS ? 50 : 180);
 
   let erro;
@@ -314,7 +318,13 @@ out center tags ${bruto};
         if (els.some((e) => e.type !== 'area')) return els;
         erro = null;
         break;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
-      } catch (e) { erro = e; if (e.fatal) break; }
+      } catch (e) {
+        // nosso próprio AbortSignal estourando é o MESMO caso do Overpass devolver 5xx: a
+        // consulta é grande demais pro tempo que sobrou. Sem isso o erro subia cru e derrubava
+        // a mineração inteira em vez de pular a região (era o timeout puro no país inteiro).
+        erro = e.name === 'TimeoutError' ? GRANDE_DEMAIS(regiao.escopo, espera) : e;
+        if (erro.fatal) break;
+      }
     }
     if (erro?.fatal) break;
   }
@@ -448,12 +458,16 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
     // desiste antes de responder. Então a varredura nacional é estado a estado, na ordem da
     // lista, parando quando a página encheu — e o cursor guarda em que estado continuar.
     const lista = Object.keys(p.estados);
-    const ateQuando = Date.now() + (SERVERLESS ? 25000 : 90000);
+    // A function morre em 60s (maxDuration do vercel.json) e o corte abaixo só é checado ENTRE
+    // estados — um único estado lento já estoura o prazo sozinho, com os 2 espelhos do Overpass
+    // tentando (espera-5)s cada. `espera` por estado tem que caber várias vezes dentro do
+    // orçamento, não perto do teto da function inteira (era 45 — dava timeout puro, sem JSON).
+    const ateQuando = Date.now() + (SERVERLESS ? 20000 : 90000);
     let i = inicio < lista.length ? inicio : 0;
     const achados = [];
     while (i < lista.length) {
       try {
-        const brutos = await overpass(cat, { pais, escopo: 'estado', estado: lista[i], espera: 45 }, bruto);
+        const brutos = await overpass(cat, { pais, escopo: 'estado', estado: lista[i], espera: SERVERLESS ? 12 : 45 }, bruto);
         // o estado varrido é a UF do lead: melhor que addr:state, que quase nunca vem preenchido
         achados.push(...brutos.filter(util).map((e) => ({ ...e, estado: lista[i] })));
         varridos.push(lista[i]);
