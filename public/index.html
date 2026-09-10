@@ -36,6 +36,9 @@
   select,input,textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--txt);
     border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
   select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+  .chkbox{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;cursor:pointer}
+  .chkbox input{width:auto;margin:0}
   select[multiple]{padding:4px;height:auto}
   select[multiple] option{padding:5px 7px;border-radius:5px}
   .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
@@ -243,9 +246,9 @@
       <option>Alta</option><option>Média</option><option>Baixa</option></select></div>
     <div><label>Canal de contato</label><select id="canal"><option value="">Todos</option>
       <option value="whatsapp">📱 Apenas com WhatsApp</option>
-      <option value="email">✉ Apenas com e-mail</option>
       <option value="site">🌐 Apenas com site</option>
       <option value="sem-site">❌ Sem site</option></select></div>
+    <div><label>&nbsp;</label><label class="chkbox"><input type="checkbox" id="so-email">✉ Apenas com e-mail</label></div>
     <div><label>Status prospecção</label><select id="status"><option value="">Todos</option>
       <option value="novo">Novo</option><option value="contatado">Contatado</option><option value="reuniao">Reunião</option>
       <option value="proposta">Proposta</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option>
@@ -365,7 +368,8 @@ const filtrar = (lista) => {
     (!valor('oferta') || l.oferta === valor('oferta')) &&
     (!valor('prioridade') || l.prioridade === valor('prioridade')) &&
     (!valor('status') || l.status === valor('status')) &&
-    ({'': true, whatsapp: !!l.whatsapp, email: !!l.email, site: !!l.site, 'sem-site': !l.site }[valor('canal')] ?? true) &&
+    ({'': true, whatsapp: !!l.whatsapp, site: !!l.site, 'sem-site': !l.site }[valor('canal')] ?? true) &&
+    (!$('#so-email').checked || !!l.email) &&
     // lead minerado não tem data de abertura (anos = null): nunca pode ser escondido por esse filtro
     (!anos || l.anos === null || l.anos >= anos) &&
     (!txt || [l.nome, l.razao_social, l.cidade, l.cnae, l.obs].join(' ').toLowerCase().includes(txt)))
@@ -788,6 +792,7 @@ $('#m-go').onclick = async () => {
   // limpa TODOS os filtros: um "porte: EPP" ou "1+ ano" esquecido esconde o lead recém-minerado
   // (minerado não tem porte nem data de abertura no cadastro público)
   F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : '');
+  $('#so-email').checked = false;
   aplicar();
   const novos = new Set(adicionados.map(l => l.cnpj));    // recém-minerados sobem pro topo desta visão
   leads.sort((a, b) => (novos.has(b.cnpj) ? 1 : 0) - (novos.has(a.cnpj) ? 1 : 0));
@@ -822,8 +827,9 @@ const exportar = (linhas, sufixo) => {
 $('#exp').onclick = () => exportar(leads, 'filtrados');
 // TODOS = a base inteira menos os descartados, ignorando os filtros da tela
 $('#exp-todos').onclick = () => exportar(base().sort((a, b) => b.score - a.score), 'todos');
-$('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : ''); aplicar(); };
+$('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0' : ''); $('#so-email').checked = false; aplicar(); };
 for (const f of F) $('#'+f).addEventListener(f === 'q' ? 'input' : 'change', aplicar);
+$('#so-email').addEventListener('change', aplicar);
 
 carregar();
 </script>
