@@ -2,6 +2,9 @@
 // é o vendedor, não o programador. Cada gancho vai inteiro no ?text= do WhatsApp.
 // Um bloco de textos por idioma: o lead carrega `idioma` (vem do país minerado) e a mensagem
 // sai na língua de quem vai ler. Lead sem idioma = base antiga, toda brasileira = pt.
+// pt-BR e pt-PT são blocos separados — mesma língua, mas "Me chamo"/gerúndio/"celular" soam
+// a disparo em massa mal traduzido pra quem lê em Portugal (e "Chamo-me"/"ecrã" soaria estranho
+// no Brasil). PT (Portugal) usa 'pt-PT'; BR usa 'pt' — ver PAISES em server.mjs.
 
 export const VENDEDOR = {
   nome: 'Eduardo Grunitzky',
@@ -122,6 +125,95 @@ const PT = {
             ? `Testei o site da ${curto(l.nome)} agora: levou ${seg(l.site_ms)}s pra abrir.`
             : `Tentei abrir o site da ${curto(l.nome)} agora e ele não respondeu.`,
       'Vocês já têm alguém cuidando disso por aí hoje?'),
+  },
+};
+
+// ---------------- português (Portugal) ----------------
+// Mesmo conteúdo do bloco PT (BR) acima, mas em português europeu de verdade: vocabulário
+// (ecrã, ficheiro, telemóvel, equipa, contacto, registo, stock, portefólio), gramática
+// (gerúndio "cuidando" -> "a tratar"; "Me chamo" -> "Chamo-me"; "te mando" -> "envio-lhe") e
+// sem gíria brasileira ("corre", "né", "todo mundo").
+
+const PROVA_PT_PT = `Deixo aqui o meu portefólio. São projetos-modelo que construí para demonstração — cada um feito de raiz, no mesmo padrão do que entrego a um cliente real. E não são imagens: os painéis abrem no navegador e funcionam mesmo, dá para pesquisar, filtrar e registar:\n${PORT}`;
+const PRECO_PT_PT = 'Se quiser, envio-lhe já a minha tabela de preços em PDF para dar uma vista de olhos sem compromisso — trabalho com preço fechado, código próprio e sem mensalidade de plataforma.';
+const FECHO_PT_PT = [PROVA_PT_PT, PRECO_PT_PT];
+
+const PT_PT = {
+  followups: {
+    erp: (l) => monta(
+      `Fechado! Em 3 pontos, o que muda no dia a dia da ${curto(l.nome)}:`,
+      '*1. Um sítio só, em vez de sete*\nRegisto de clientes, agenda, serviços, pagamentos e histórico no mesmo ecrã. Acaba a caça ao ficheiro certo e o "qual é a versão boa da folha de cálculo?".',
+      '*2. Introduz uma vez só*\nO que entra no atendimento aparece logo nas finanças e no relatório. Sem repetir o trabalho, sem erro de "esqueci de lançar".',
+      '*3. Os números do mês quando quiser*\nQuanto entrou, quanto está em aberto, quem é o cliente que mais volta. Hoje isso só existe depois de alguém se sentar e somar.',
+      'É feito à medida com as etapas que já usam — ninguém precisa de mudar a forma de trabalhar para caber num sistema pronto. Funciona no telemóvel e no computador, e a formação da equipa está incluída.',
+      ...FECHO_PT_PT),
+
+    ia: (l) => monta(
+      `Fechado! Em 3 pontos, o que muda no atendimento da ${curto(l.nome)}:`,
+      '*1. Resposta em segundos, 24h*\nMensagem de domingo à noite ou a meio de um dia cheio é respondida na hora, no seu tom. Quem pergunta o preço às 22h não fica à espera até adormecer — e não fecha negócio com a concorrência.',
+      '*2. Só chega até si quem vale a pena*\nA IA tira as dúvidas repetidas (preço, horário, morada, como funciona), entende o que a pessoa quer e só passa à equipa quem está pronto para fechar.',
+      '*3. Marcações e registo automáticos*\nEla marca, confirma, lembra no dia e deixa tudo registado. Nada de "mandei mensagem e ninguém respondeu".',
+      'É treinada com as suas informações e a sua forma de falar — não é um robô genérico de "prima 1". E pode sempre assumir a conversa a qualquer momento.',
+      ...FECHO_PT_PT),
+
+    mobile: (l) => monta(
+      `Fechado! Em 3 pontos, o que muda para a ${curto(l.nome)} e para os seus clientes:`,
+      '*1. O cliente resolve tudo sozinho*\nMarcar, remarcar, ver histórico, 2.ª via, pagar. Sem ligar, sem esperar que alguém abra o WhatsApp.',
+      '*2. Ele volta sem que tenha de lembrar*\nAviso automático de retorno, vencimento e promoção direto no telemóvel dele. É uma recompra que hoje se perde por esquecimento.',
+      '*3. A sua equipa deixa de ser telefonista*\nAs perguntas repetidas desaparecem da rotina e sobra tempo para atender bem quem está à sua frente.',
+      'Começa simples, com o que mais usam, e cresce depois. Tudo com a sua marca — o cliente vê a sua empresa, não a de uma plataforma.',
+      ...FECHO_PT_PT),
+
+    api: (l) => monta(
+      `Fechado! Em 3 pontos, o que muda na operação da ${curto(l.nome)}:`,
+      '*1. Os dados são introduzidos uma vez só*\nO que entra num sistema aparece nos outros sozinho. Aquela hora diária de copiar de um lado para o outro deixa de existir.',
+      '*2. Os números passam a bater certo*\nStock, caixa e relatório saem da mesma fonte. Acaba a divergência que ninguém consegue explicar no fim do mês.',
+      '*3. Sem trocar o que já funciona*\nLigo as ferramentas que já usam por API. Se for preciso migrar alguma coisa, faço com a operação a funcionar — ninguém para um dia de trabalho.',
+      'Antes de mais, mapeio onde está o retrabalho hoje e mostro-lhe o esquema: o que conversa com o quê e o que vai deixar de ser manual.',
+      ...FECHO_PT_PT),
+
+    web: (l) => monta(
+      `Fechado! Em 3 pontos, o que muda para a ${curto(l.nome)}:`,
+      `*1. Ser encontrado por quem já está à procura*\nQuem pesquisa "${String(l.cnae || 'seu serviço').toLowerCase()} em ${l.cidade || 'sua região'}" no Google hoje encontra a concorrência${l.site ? ' — e mesmo com site, um site lento fica depois na fila do Google' : ', porque não têm site'}. A página é preparada para os termos que as pessoas realmente escrevem.`,
+      '*2. A página responde antes de si*\nServiços, preços, horário, fotos e testemunhos: é o que a pessoa quer saber antes de entrar em contacto. Chega menos "quanto custa?" e mais gente já decidida.',
+      '*3. O contacto chega organizado ao seu WhatsApp*\nBotão de orçamento/marcação que recolhe nome, telefone e o que a pessoa quer. Deixa de perder quem mandou mensagem de madrugada.',
+      'Abre em 1 a 2 segundos no telemóvel, que é de onde quase toda a gente acede. E é código próprio: sem mensalidade de criador de sites e sem ficar refém de plataforma.',
+      ...FECHO_PT_PT),
+  },
+
+  ganchos: {
+    erp: (l) => monta(
+      `Olá! Tudo bem? Chamo-me ${EU}, desenvolvo sistemas de gestão à medida.`,
+      l.sistemas.length
+        ? `Vi que a ${curto(l.nome)} gere a operação com ${l.sistemas.join(' e ')}.`
+        : `Dei uma vista de olhos à ${curto(l.nome)} e não encontrei sinal de um sistema de gestão próprio.`,
+      'Já têm alguém a tratar disso hoje?'),
+
+    ia: (l) => monta(
+      `Olá! Tudo bem? Chamo-me ${EU}, trabalho com automação de atendimento.`,
+      `Vi que a ${curto(l.nome)} atende ${l.whatsapp ? 'pelo WhatsApp' : 'por telefone'} e recebe bastante contacto.`,
+      'Faz sentido enviar-lhe uma prévia de como automatizar isto?'),
+
+    mobile: (l) => monta(
+      `Olá! Tudo bem? Chamo-me ${EU}, desenvolvo aplicações e áreas de cliente.`,
+      `A ${curto(l.nome)} tem cliente que volta sempre — hoje ele liga para remarcar?`,
+      'Já têm alguma coisa nesse sentido a funcionar?'),
+
+    api: (l) => monta(
+      `Olá! Tudo bem? Chamo-me ${EU}, trabalho com integração entre sistemas.`,
+      `Contei ${l.sistemas.length} ferramentas a funcionar na ${curto(l.nome)} — o mesmo dado entra em mais de uma?`,
+      'Já têm alguém a tratar dessa integração hoje?'),
+
+    web: (l) => monta(
+      `Olá! Tudo bem? Chamo-me ${EU}, desenvolvo sites rápidos e à medida.`,
+      !l.site
+        ? `Procurei o site da ${curto(l.nome)} e não encontrei — estão só ${l.instagram ? 'no Instagram' : 'no WhatsApp'} hoje, certo?`
+        : l.site_status === 'protegido'
+          ? `Vi que a ${curto(l.nome)} tem site, mas não consegui abri-lo para ver.`
+          : l.site_ms
+            ? `Testei agora o site da ${curto(l.nome)}: demorou ${seg(l.site_ms)}s a abrir.`
+            : `Tentei abrir agora o site da ${curto(l.nome)} e não respondeu.`,
+      'Já têm alguém a tratar disso hoje?'),
   },
 };
 
@@ -297,7 +389,7 @@ const IT = {
 
 // ---------------- seleção por idioma ----------------
 
-export const IDIOMAS = { pt: PT, en: EN, it: IT };
+export const IDIOMAS = { pt: PT, 'pt-PT': PT_PT, en: EN, it: IT };
 const lang = (l) => IDIOMAS[l?.idioma] ?? PT;      // sem idioma = lead antigo, todos BR
 
 const OFERTAS = ['erp', 'ia', 'mobile', 'api', 'web'];
@@ -320,6 +412,17 @@ const EMAIL = {
     },
     ponte: 'Pra você não precisar responder só pra saber do que se trata, já deixo os 3 pontos principais:',
     saida: 'Se não for do seu interesse, é só responder "remover" que eu não escrevo de novo.',
+  },
+  'pt-PT': {
+    assunto: {
+      erp:    (l) => `${curto(l.nome)} — um sistema em vez de sete`,
+      ia:     (l) => `${curto(l.nome)} — quem manda mensagem às 22h`,
+      mobile: (l) => `${curto(l.nome)} — o cliente a marcar sozinho`,
+      api:    (l) => `${curto(l.nome)} — o mesmo dado introduzido duas vezes`,
+      web:    (l) => `${curto(l.nome)} — quem procura ${String(l.cnae || 'seu serviço').toLowerCase()} no Google`,
+    },
+    ponte: 'Para não ter de responder só para saber do que se trata, deixo-lhe já os 3 pontos principais:',
+    saida: 'Se não for do seu interesse, basta responder "remover" que não volto a escrever.',
   },
   en: {
     assunto: {

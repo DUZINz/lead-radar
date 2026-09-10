@@ -49,7 +49,7 @@ assert.equal(e({ abertura: null, sistemas: [], site_status: 'moderno' }).priorid
 // O gancho vai inteiro no ?text= do WhatsApp. Mil caracteres com link na 1ª mensagem para um
 // estranho = bloqueio. Portfólio e tabela de preços só na 2ª (quando ele já respondeu).
 const LONGO = '👨‍⚕️ Dr Carlos Dalmaso | Telemedicina - Check up - Domiciliar | Clínico Geral em Curitiba';
-// as mesmas regras valem nos 3 idiomas — tradução longa demais estoura o ?text= igual
+// as mesmas regras valem em todo idioma — tradução longa demais estoura o ?text= igual
 for (const idioma of Object.keys(IDIOMAS)) {
   for (const [oferta, gancho] of Object.entries(GANCHOS)) {
     for (const caso of [
@@ -73,6 +73,12 @@ assert.match(it.gancho, /^Buongiorno! Sono Eduardo/, 'lead italiano recebe ganch
 assert.match(it.followup, /Le lascio il mio portfolio/, 'follow-up também traduzido');
 assert.match(e({ pais: 'US', idioma: 'en' }).gancho, /^Hi! My name is/, 'lead americano recebe gancho em inglês');
 assert.match(e({}).gancho, /^Olá!/, 'lead sem idioma (base antiga) continua em português');
+// pt-BR e pt-PT são blocos separados: mesma língua, vocabulário e gramática diferentes
+const pt = e({ nome: 'Padaria Central', pais: 'PT', idioma: 'pt-PT', sistemas: [] });
+assert.match(pt.gancho, /^Olá! Tudo bem\? Chamo-me Eduardo/, 'lead português recebe "Chamo-me", não "Me chamo"');
+assert.ok(!/\bcelular\b|\bequipe\b|\bcadastr|\bregistro\b/i.test(pt.gancho + pt.followup),
+  'gancho/follow-up de Portugal não pode ter vocabulário brasileiro (celular/equipe/cadastro/registro)');
+assert.ok(/telemóvel|equipa|portefólio/i.test(pt.followup), 'follow-up de Portugal usa vocabulário europeu');
 // site 'protegido' é Cloudflare barrando o robô, não site ruim: não pode virar acusação
 const prot = e({ site: 'x.com.br', site_status: 'protegido', site_ms: null, nicho: 'varejo' });
 assert.ok(!/defasado|lento|não respondeu/.test(prot.gancho), 'não afirmar defeito de site não medido');
@@ -131,7 +137,7 @@ assert.equal(e({ ...eua, email: 'contato@x.com' }).prioridade, 'Alta', 'e-mail �
 assert.equal(e({ ...eua, telefone: '(415) 555-1234' }).prioridade, 'Alta', 'telefone também');
 assert.equal(e({ ...eua, telefone: '', email: '' }).prioridade, 'Média', 'lead americano sem contato nenhum não é Alta');
 
-console.log('ok — motor, copy curta (<250) nos 3 idiomas, telefone por país e paginação');
+console.log('ok — motor, copy curta (<250) em todo idioma, telefone por país e paginação');
 
 // ---- e-mail: o canal do lead estrangeiro ----
 // O e-mail não tem "pode mandar?" — ou a 1a mensagem entrega o valor inteiro, ou não há 2a.

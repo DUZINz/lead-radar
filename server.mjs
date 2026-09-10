@@ -182,7 +182,7 @@ const PAISES = {
       WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming' },
   },
   PT: {
-    nome: 'Portugal', idioma: 'pt', ddi: '351', rotulo: 'Distrito',
+    nome: 'Portugal', idioma: 'pt-PT', ddi: '351', rotulo: 'Distrito',
     // concelho é admin_level 7 (8 é freguesia): pesquisar "Porto" em 8 traria uma freguesia
     area: '["ISO3166-1"="PT"][admin_level=2]', nivelEstado: ['6', '4'], nivelCidade: ['7', '8'],
     estados: { Aveiro:'Aveiro', Beja:'Beja', Braga:'Braga', Bragança:'Bragança',
