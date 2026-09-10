@@ -427,7 +427,7 @@ const zapDe = (t) => umNumero(t['contact:whatsapp'] || t.whatsapp).replace(/^htt
 const chaveLead = (l) => soDigitos(l.telefone) || soDigitos(l.whatsapp) || `${l.nome}|${l.cidade}`.toLowerCase();
 
 async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cidade,
-                         quantidade = 25, apenas_whatsapp = false, offset = 0 }) {
+                         quantidade = 25, apenas_whatsapp = false, apenas_email = false, offset = 0 }) {
   const cat = CATALOGO[nicho];
   const p = PAISES[pais];
   estado = (estado ?? uf ?? '').trim();          // `uf` é o nome antigo do campo
@@ -447,7 +447,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   // em todas as páginas, senão candidato novo entra na frente do cursor e o offset pula gente.
   // Pedir mais no `out` do Overpass custa pouco — o caro é resolver a área e testar os sites,
   // e o teste de site continua limitado a `limite`. (celular é tag rara: com WhatsApp varre o dobro)
-  const bruto = apenas_whatsapp ? 800 : 400;
+  const bruto = (apenas_whatsapp || apenas_email) ? 800 : 400;
   const util = (e) => e.type !== 'area' && e.tags?.name && !ehPublico(e.tags);
 
   let municipio = '', candidatos, ranqueados, elementos, esgotado, proximo;
@@ -476,10 +476,10 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
         pulados.push(lista[i]);     // estado grande demais pro segmento: segue pro próximo
       }
       i++;
-      if (ranquear(achados, apenas_whatsapp, pais).length >= limite || Date.now() > ateQuando) break;
+      if (ranquear(achados, apenas_whatsapp, pais, apenas_email).length >= limite || Date.now() > ateQuando) break;
     }
     candidatos = achados;
-    ranqueados = ranquear(candidatos, apenas_whatsapp, pais);
+    ranqueados = ranquear(candidatos, apenas_whatsapp, pais, apenas_email);
     elementos = ranqueados.slice(0, limite);
     esgotado = i >= lista.length;
     proximo = esgotado ? 0 : i;     // próxima mineração continua no estado seguinte
@@ -490,7 +490,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
     // é o estado — aí a cidade de cada lead só pode vir do endereço dele.
     municipio = escopo === 'cidade' ? (brutos.find((e) => e.type === 'area')?.tags?.name || cidade) : '';
     candidatos = brutos.filter(util);
-    ranqueados = ranquear(candidatos, apenas_whatsapp, pais);
+    ranqueados = ranquear(candidatos, apenas_whatsapp, pais, apenas_email);
     elementos = ranqueados.slice(inicio, alvo);     // a "página" pedida desta varredura
     // ponytail: `bruto` limita o `out` do Overpass, então esgotado pode ser falso positivo quando
     // a página bate exatamente no teto de 800. Só importa em cidade gigante — paginar no Overpass
@@ -568,7 +568,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   // proximo_offset volta pro cliente, que o guarda por busca e devolve na próxima mineração.
   // Quando esgotou, zera: o OSM ganha POI novo com o tempo e a dedupe segura o repetido.
   return { sucesso: true, encontrados: leads.length, novos: novos.length, analisados: candidatos.length,
-    apenas_whatsapp, offset: inicio, proximo_offset: proximo, escopo,
+    apenas_whatsapp, apenas_email, offset: inicio, proximo_offset: proximo, escopo,
     // varredura nacional: por quais estados passou e quais teve que pular (grandes demais)
     varridos: varridos.map((e) => p.estados[e]), pulados: pulados.map((e) => p.estados[e]),
     esgotado, disponiveis: ranqueados.length, leads: novos.map((l) => enriquecer(l)) };
@@ -578,8 +578,9 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
 // id. O desempate não é cosmético — o offset só significa alguma coisa se duas execuções da mesma
 // busca produzirem exatamente a mesma fila. Exportado porque é o que o teste consegue checar
 // sem rede (o resto de `minerar` depende do Overpass).
-export const ranquear = (candidatos, apenas_whatsapp = false, pais = 'BR') => candidatos
+export const ranquear = (candidatos, apenas_whatsapp = false, pais = 'BR', apenas_email = false) => candidatos
   .filter((e) => !apenas_whatsapp || zapDe(e.tags) || ehCelular(telDe(e.tags), pais))
+  .filter((e) => !apenas_email || e.tags.email || e.tags['contact:email'])
   .sort((a, b) => pesoContato(b.tags) - pesoContato(a.tags) || a.id - b.id);
 
 const pesoContato = (t = {}) =>

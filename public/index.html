@@ -116,6 +116,10 @@
     border:1px solid rgba(37,211,102,.35);border-radius:10px;padding:12px;margin-bottom:18px;
     cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)}
   .wppbox input{width:auto;margin-top:2px;accent-color:#25d366;flex:none}
+  .mailbox{display:flex;gap:10px;align-items:flex-start;background:rgba(61,139,255,.08);
+    border:1px solid rgba(61,139,255,.35);border-radius:10px;padding:12px;margin-bottom:18px;
+    cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)}
+  .mailbox input{width:auto;margin-top:2px;accent-color:var(--acc-2);flex:none}
   .zap{display:inline-flex;align-items:center;gap:5px;background:rgba(37,211,102,.14);
     border:1px solid rgba(37,211,102,.45);color:#25d366;border-radius:6px;padding:3px 8px;
     font-size:12px;font-weight:600;white-space:nowrap}
@@ -210,6 +214,11 @@
       <input type="checkbox" id="m-wpp">
       <span><b>📱 Apenas empresas com WhatsApp</b><br>
         <span class="muted" id="m-wpp-txt">ignora telefone fixo e sem contato. Desmarcado, traz também quem só tem fixo — nem toda empresa publica celular</span></span>
+    </label>
+    <label for="m-email" class="mailbox">
+      <input type="checkbox" id="m-email">
+      <span><b>✉️ Apenas empresas com e-mail</b><br>
+        <span class="muted">e-mail é raro no cadastro público — reduz bastante a quantidade encontrada, mas garante um canal certo pra acionar</span></span>
     </label>
     <button class="primary" id="m-go" style="width:100%;padding:12px">Iniciar Mineração em Tempo Real</button>
     <p class="muted" style="margin:12px 0 0;font-size:11px">A busca leva de 15s a 90s: consulta a base pública,
@@ -337,7 +346,7 @@ let descartados = new Set(LS.ler('descartados', []));
 // Onde parou a varredura de cada busca: { 'clinicas|curitiba|PR|1': 25 }. O servidor é stateless
 // (na Vercel, obrigatoriamente), então quem lembra a página é o navegador — igual ao resto do estado.
 let offsets = LS.ler('offsets', {});
-const chaveBusca = (b) => [b.pais, b.escopo, b.nicho, (b.cidade || '').toLowerCase(), b.estado, b.apenas_whatsapp ? 1 : 0].join('|');
+const chaveBusca = (b) => [b.pais, b.escopo, b.nicho, (b.cidade || '').toLowerCase(), b.estado, b.apenas_whatsapp ? 1 : 0, b.apenas_email ? 1 : 0].join('|');
 
 // a base virou 100% real: joga fora qualquer resíduo dos mocks antigos (CNPJ real vs. id do OSM)
 const real = (cnpj) => String(cnpj).startsWith('OSM-');
@@ -716,7 +725,7 @@ const PASSOS = [
   ['💡 Calculando oportunidades e ganchos comerciais…', 'aplicando o motor de scoring em cada empresa', 85],
 ];
 let timers = [];
-const abrirModal = (v) => { $('#mov').classList.toggle('open', v); if (v) { $('#m-wpp').checked = LS.ler('so_wpp', false); $('#mform').hidden = false; $('#mload').hidden = true; document.querySelectorAll('#modal .ok,#modal .err').forEach(e => e.remove()); escopoUI(); } };
+const abrirModal = (v) => { $('#mov').classList.toggle('open', v); if (v) { $('#m-wpp').checked = LS.ler('so_wpp', false); $('#m-email').checked = LS.ler('so_email', false); $('#mform').hidden = false; $('#mload').hidden = true; document.querySelectorAll('#modal .ok,#modal .err').forEach(e => e.remove()); escopoUI(); } };
 $('#btn-minerar').onclick = () => abrirModal(true);
 $('#mfechar').onclick = () => { abrirModal(false); timers.forEach(clearTimeout); };
 $('#mov').onclick = (e) => e.target === $('#mov') && $('#mfechar').click();
@@ -728,16 +737,17 @@ $('#m-go').onclick = async () => {
   const estado = escopo === 'pais' ? '' : $('#m-uf').value;
   const onde = escopo === 'cidade' ? `${cidade}/${estado}` : escopo === 'estado'
     ? `${$('#m-uf').selectedOptions[0].text} (${nomePais(pais)})` : nomePais(pais);
-  const apenas_whatsapp = $('#m-wpp').checked, quantidade = Number($('#m-qtd').value);
+  const apenas_whatsapp = $('#m-wpp').checked, apenas_email = $('#m-email').checked, quantidade = Number($('#m-qtd').value);
   if (!marcados.length) return $('#m-nicho').focus();
   if (escopo === 'cidade' && !cidade) return $('#m-cidade').focus();
   LS.gravar('so_wpp', apenas_whatsapp);   // a escolha vale pras próximas minerações
+  LS.gravar('so_email', apenas_email);
   $('#mform').hidden = true; $('#mload').hidden = false;
   const linhas = [], adicionados = [];
   let falha = null;
   // Serial de propósito: o Overpass é base pública e limita requisições em paralelo.
   for (const [i, opt] of marcados.entries()) {
-    const body = { nicho: opt.value, pais, escopo, estado, cidade, quantidade, apenas_whatsapp };
+    const body = { nicho: opt.value, pais, escopo, estado, cidade, quantidade, apenas_whatsapp, apenas_email };
     const kBusca = chaveBusca(body);
     body.offset = offsets[kBusca] ?? 0;            // cada segmento tem seu próprio cursor
     const pre = marcados.length > 1 ? `[${i + 1}/${marcados.length}] ${opt.text} · ` : '';
@@ -783,7 +793,8 @@ $('#m-go').onclick = async () => {
       adicionados.length ? `Os ${adicionados.length} leads dos segmentos anteriores já foram salvos.` : ''}</span>`);
   if (!adicionados.length && !falha) bloco('err', `Nenhuma empresa nova em <b>${esc(onde)}</b>.
     <br><span class="muted">${linhas.join('<br>')}${apenas_whatsapp
-      ? '<br>Desmarque "Apenas empresas com WhatsApp" para incluir quem só publica telefone fixo.' : ''}</span>`);
+      ? '<br>Desmarque "Apenas empresas com WhatsApp" para incluir quem só publica telefone fixo.' : ''}${apenas_email
+      ? '<br>Desmarque "Apenas empresas com e-mail" — é raro no cadastro público e pode estar zerando o resultado.' : ''}</span>`);
   if (adicionados.length) {
     bloco('ok', `✓ ${adicionados.length} novas empresas reais mineradas!
       <br><span class="muted" style="display:block;text-align:left;margin-top:8px;line-height:1.7">${linhas.join('<br>')}</span>
