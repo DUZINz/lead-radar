@@ -24,8 +24,10 @@ npx vercel --prod   # produção
 Ou conecte o repositório no painel da Vercel — não há build step, é zero-config:
 
 - `public/` é servido como estático (é o output directory padrão quando existe).
-- `api/index.mjs` é a Serverless Function; o `rewrite` do `vercel.json` manda todo `/api/*` para ela,
-  que apenas reexporta o handler de `server.mjs` — mesmo código do local, sem duplicação.
+- `server.mjs` vira a Serverless Function sozinho — a Vercel detecta o `export default handler`
+  na raiz e builda a partir dele ("root entrypoint"). Não há mais `api/index.mjs`: um projeto com
+  Framework Preset "Node.js" ignora `functions`/`rewrites` de `vercel.json` apontando pra `api/`,
+  então a function tem que nascer do arquivo raiz.
 - `includeFiles: leads.json` mantém a semente (vazia) dentro do bundle da function.
 - `maxDuration: 60` porque a mineração leva de 7s a 30s (Overpass + teste de sites).
 
@@ -52,8 +54,7 @@ importa, responde e não toca em disco).
 |---|---|
 | `server.mjs` | handler HTTP + motor de scoring + mineração; servidor local ou function na Vercel |
 | `copy.mjs` | Copy comercial: gancho curto (<250 chars) + follow-up com portfólio e preço — edite aqui, não no motor |
-| `api/index.mjs` | Serverless Function da Vercel — reexporta o handler |
-| `vercel.json` | rewrite `/api/*` → function, `maxDuration`, `includeFiles` |
+| `vercel.json` | `maxDuration`, `includeFiles` — sem rewrite: `server.mjs` já é a function |
 | `leads.json` | Semente vazia (`[]`) — a base é 100% real, vinda da mineração |
 | `public/index.html` | UI dark-tech completa (dashboard, tabela, filtros, Raio-X, exportação); vira cards no mobile |
 | `leadradar.db` | SQLite criado no primeiro run: status de prospecção + histórico de buscas |

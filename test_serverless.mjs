@@ -1,11 +1,12 @@
-// node test_serverless.mjs — checa o caminho de deploy da Vercel: a function importa o handler,
-// nenhum SQLite é aberto e as rotas respondem sem tocar em disco.
+// node test_serverless.mjs — checa o caminho de deploy da Vercel: server.mjs vira função sozinho
+// ("root entrypoint" — a Vercel não builda mais api/index.mjs em separado), nenhum SQLite é
+// aberto e as rotas respondem sem tocar em disco.
 import assert from 'node:assert/strict';
 import { existsSync, rmSync } from 'node:fs';
 
 process.env.VERCEL = '1';
 const antes = existsSync('leadradar.db');
-const { default: handler } = await import('./api/index.mjs');
+const { default: handler } = await import('./server.mjs');
 
 const chamar = async (method, url, body) => {
   const req = Object.assign(
