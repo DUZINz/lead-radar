@@ -37,7 +37,8 @@
     border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
   select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
   .chkbox{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--line);
-    border-radius:8px;padding:8px 10px;cursor:pointer}
+    border-radius:8px;padding:8px 10px;cursor:pointer;
+    font-size:13px;text-transform:none;letter-spacing:normal;color:var(--txt);margin-bottom:0}
   .chkbox input{width:auto;margin:0}
   select[multiple]{padding:4px;height:auto}
   select[multiple] option{padding:5px 7px;border-radius:5px}
@@ -248,7 +249,7 @@
       <option value="whatsapp">📱 Apenas com WhatsApp</option>
       <option value="site">🌐 Apenas com site</option>
       <option value="sem-site">❌ Sem site</option></select></div>
-    <div><label>&nbsp;</label><label class="chkbox"><input type="checkbox" id="so-email">✉ Apenas com e-mail</label></div>
+    <div><label>E-mail</label><label class="chkbox"><input type="checkbox" id="so-email">✉ Apenas com e-mail</label></div>
     <div><label>Status prospecção</label><select id="status"><option value="">Todos</option>
       <option value="novo">Novo</option><option value="contatado">Contatado</option><option value="reuniao">Reunião</option>
       <option value="proposta">Proposta</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option>
