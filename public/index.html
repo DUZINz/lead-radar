@@ -843,6 +843,18 @@ $('#limpar').onclick = () => { F.forEach(f => $('#'+f).value = f === 'anos' ? '0
 for (const f of F) $('#'+f).addEventListener(f === 'q' ? 'input' : 'change', aplicar);
 $('#so-email').addEventListener('change', aplicar);
 
+// alguns navegadores não repassam o clique do <label> pro checkbox de forma confiável quando ele
+// é item flex com padding/cursor próprio — assume o toggle na mão em vez de depender disso.
+document.querySelectorAll('.wppbox, .mailbox, .chkbox').forEach((lbl) => {
+  const cb = lbl.querySelector('input[type=checkbox]');
+  lbl.addEventListener('click', (e) => {
+    if (cb.disabled) return;
+    e.preventDefault();
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+});
+
 carregar();
 </script>
 </body>
