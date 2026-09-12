@@ -11,6 +11,13 @@
     --alta:#ff5c7a; --media:#ffb547; --baixa:#5d7085;
   }
   *{box-sizing:border-box}
+  /* scrollbar padrão do SO (clara) contra um fundo escuro é o que mais chama atenção como
+     "sujo" — sobrescreve pra ficar discreta e combinar com o resto da UI */
+  *{scrollbar-color:var(--line) transparent;scrollbar-width:thin}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:var(--dim);background-clip:padding-box}
   body{margin:0;background:
       radial-gradient(1100px 500px at 15% -10%, #0d2a3a 0%, transparent 60%),
       radial-gradient(900px 400px at 90% 0%, #16173a 0%, transparent 55%), var(--bg);
@@ -32,20 +39,24 @@
   .kpi span{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px}
   .filters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;
     display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
-  label{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);display:block;margin-bottom:4px}
+  label{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);display:block;margin-bottom:6px}
   select,input,textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--txt);
-    border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
-  select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+    border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;transition:border-color .15s,box-shadow .15s}
+  select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,229,160,.15)}
   .chkbox{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--line);
     border-radius:8px;padding:8px 10px;cursor:pointer;
     font-size:13px;text-transform:none;letter-spacing:normal;color:var(--txt);margin-bottom:0}
   .chkbox input{width:auto;margin:0}
-  select[multiple]{padding:4px;height:auto}
-  select[multiple] option{padding:5px 7px;border-radius:5px}
+  select[multiple]{padding:6px;height:auto}
+  select[multiple] option{padding:8px 10px;border-radius:6px;margin-bottom:1px}
+  /* option:checked com background em gradiente é o truque que faz o Chrome/Edge respeitarem
+     a cor customizada — sem isso o item marcado usa sempre o azul nativo do SO */
+  select[multiple] option:checked{background:linear-gradient(0deg,rgba(0,229,160,.22) 0%,rgba(0,229,160,.22) 100%);color:var(--acc)}
   .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
   button{background:var(--panel-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
-    padding:8px 14px;font:inherit;font-size:13px;cursor:pointer}
+    padding:8px 14px;font:inherit;font-size:13px;cursor:pointer;transition:border-color .15s,filter .15s,transform .1s}
   button:hover{border-color:var(--acc);color:var(--acc)}
+  button:active{transform:translateY(1px)}
   button.primary{background:var(--acc);border-color:var(--acc);color:#04140e;font-weight:600}
   button.primary:hover{filter:brightness(1.1);color:#04140e}
   .muted{color:var(--dim);font-size:12px}
@@ -87,7 +98,9 @@
     color:var(--dim);margin:22px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
   .kv{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:13px}
   .kv span{color:var(--dim)}
-  .close{position:absolute;top:16px;right:18px}
+  .close{position:absolute;top:16px;right:16px;width:30px;height:30px;padding:0;border-radius:50%;
+    background:transparent;border-color:transparent;color:var(--dim);font-size:14px;line-height:1}
+  .close:hover{background:var(--panel-2);border-color:var(--line);color:var(--txt)}
   .script{background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--acc);
     border-radius:8px;padding:13px;font-size:13px;line-height:1.6;white-space:pre-wrap}
   ul.mot{margin:6px 0 0 18px;padding:0;font-size:13px} ul.mot li{margin:3px 0}
@@ -95,9 +108,11 @@
   #mov{position:fixed;inset:0;background:rgba(3,6,10,.72);backdrop-filter:blur(4px);display:none;
     align-items:center;justify-content:center;z-index:60;padding:20px}
   #mov.open{display:flex}
-  #modal{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;
-    padding:26px 28px;width:min(480px,100%);box-shadow:0 30px 80px rgba(0,0,0,.6);
+  #modal{position:relative;background:linear-gradient(175deg,var(--panel-2),var(--panel) 140px);
+    border:1px solid var(--line);border-radius:16px;
+    padding:28px 32px 32px;width:min(500px,100%);box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.03) inset;
     max-height:calc(100vh - 40px);overflow:auto}
+  #modal h2{font-size:19px}
   .spin{width:44px;height:44px;margin:26px auto 0;border-radius:50%;
     border:3px solid var(--line);border-top-color:var(--acc);animation:sp .8s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -113,12 +128,14 @@
   .rank{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12px}
   /* WhatsApp: canal acionável, então ganha destaque próprio */
   .wppbox{display:flex;gap:10px;align-items:flex-start;background:rgba(37,211,102,.08);
-    border:1px solid rgba(37,211,102,.35);border-radius:10px;padding:12px;margin-bottom:18px;
-    cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)}
+    border:1px solid rgba(37,211,102,.35);border-radius:10px;padding:12px;margin-bottom:14px;
+    cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt);transition:background .15s,border-color .15s}
+  .wppbox:hover{background:rgba(37,211,102,.13);border-color:rgba(37,211,102,.55)}
   .wppbox input{width:auto;margin-top:2px;accent-color:#25d366;flex:none}
   .mailbox{display:flex;gap:10px;align-items:flex-start;background:rgba(61,139,255,.08);
     border:1px solid rgba(61,139,255,.35);border-radius:10px;padding:12px;margin-bottom:18px;
-    cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)}
+    cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt);transition:background .15s,border-color .15s}
+  .mailbox:hover{background:rgba(61,139,255,.13);border-color:rgba(61,139,255,.55)}
   .mailbox input{width:auto;margin-top:2px;accent-color:var(--acc-2);flex:none}
   .zap{display:inline-flex;align-items:center;gap:5px;background:rgba(37,211,102,.14);
     border:1px solid rgba(37,211,102,.45);color:#25d366;border-radius:6px;padding:3px 8px;
@@ -190,25 +207,25 @@
 
 <div id="mov"><div id="modal">
   <button class="close" id="mfechar">✕</button>
-  <h2 style="margin:0 0 4px">Minerar Empresas Reais</h2>
-  <p class="muted" style="margin:0 0 18px">Cadastro público OpenStreetMap + verificação de site em tempo real. Sem API paga.</p>
+  <h2 style="margin:0 0 6px">⚡ Minerar Empresas Reais</h2>
+  <p class="muted" style="margin:0 0 22px">Cadastro público OpenStreetMap + verificação de site em tempo real. Sem API paga.</p>
   <div id="mform">
-    <div style="margin-bottom:12px"><label>Nichos / Segmentos — segure Ctrl (ou ⌘) para marcar vários</label>
+    <div style="margin-bottom:16px"><label>Nichos / Segmentos — segure Ctrl (ou ⌘) para marcar vários</label>
       <select id="m-nicho" multiple size="6"></select></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
       <div><label>País</label><select id="m-pais"></select></div>
       <div><label>Abrangência da busca</label><select id="m-escopo">
         <option value="cidade">Uma cidade</option>
         <option value="estado">Estado / região inteira</option>
         <option value="pais">País inteiro</option></select></div>
     </div>
-    <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:16px">
       <div id="m-box-cidade"><label>Cidade</label><input id="m-cidade" placeholder="Curitiba" value="Curitiba"></div>
       <div id="m-box-uf"><label id="m-rotulo-uf">Estado</label><select id="m-uf"></select></div>
     </div>
-    <p id="m-aviso" hidden style="margin:0 0 12px;padding:10px 12px;border-radius:8px;font-size:12px;
-      line-height:1.6;background:#3a2d0b;border:1px solid #7a5c12;color:#ffd479"></p>
-    <div style="margin-bottom:14px"><label>Quantidade de leads</label><select id="m-qtd">
+    <p id="m-aviso" hidden style="margin:0 0 16px;padding:10px 12px;border-radius:8px;font-size:12px;
+      line-height:1.6;background:#3a2d0b;border:1px solid #7a5c12;border-left:3px solid #ffb547;color:#ffd479"></p>
+    <div style="margin-bottom:18px"><label>Quantidade de leads</label><select id="m-qtd">
       <option>10</option><option selected>25</option><option>50</option></select></div>
     <label for="m-wpp" class="wppbox">
       <input type="checkbox" id="m-wpp">
