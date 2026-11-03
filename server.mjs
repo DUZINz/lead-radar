@@ -153,7 +153,19 @@ export function enriquecer(l, status) {
 // ---------------- mineração de leads reais (OpenStreetMap / Overpass) ----------------
 
 const UA = 'LeadRadar/1.0 (prospeccao B2B; contato local)';
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// Ordem = confiabilidade vista de IP de nuvem. overpass-api.de limita por IP, e a Vercel divide IP
+// entre muita gente: lá ele vive devolvendo 429. private.coffee não tem limite por IP.
+const OVERPASS = ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+// Corrida escalonada: o 1º espelho sai na hora, o próximo entra se o anterior não respondeu em
+// ESCALA ms (ou assim que ele falhar). Ganha o primeiro que responder; os outros são abortados.
+// Antes era um depois do outro, cada um esperando até 45s — espelho caído = function morta.
+const ESCALA = 4000;
+// Na Vercel a function morre em 60s e o celular só vê "Load failed". O servidor tem que responder
+// JSON antes disso, sempre: 50s de orçamento total, 12s dele reservados pro teste dos sites.
+const ORCAMENTO = SERVERLESS ? 50000 : 170000;
+const RESERVA_SITES = 12000;
 
 // Países ligados. Não existe admin_level padrão no OSM: no Brasil município é 8, em Portugal
 // concelho é 7, na Inglaterra cidade grande tanto pode ser 8 (borough) quanto 6 (unitária).
@@ -276,57 +288,119 @@ const GRANDE_DEMAIS = (escopo, seg) => Object.assign(new Error(
   (escopo === 'pais' ? 'Busque por estado/região, ou escolha um segmento de volume menor.'
                      : 'Busque por cidade, ou escolha um segmento de volume menor.')), { fatal: true });
 
-async function overpass(cat, regiao, bruto) {
+// Base lenta ≠ área grande. Timeout NOSSO numa cidade é o espelho engasgado (ou todos ocupados),
+// não consulta impossível — dizer "busque por cidade" pra quem já buscou por cidade não ajuda.
+const LENTA = () => new Error('A base pública está lenta agora e não respondeu a tempo. Tente de novo em alguns segundos.');
+const OCUPADA = 'Base pública ocupada no momento (limite de requisições) — tente de novo em alguns segundos';
+
+async function umEspelho(url, q, signal) {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q, signal });
+  const txt = await r.text();
+  // sob carga o Overpass responde XML/HTML de rate limit em vez de JSON
+  try { const dados = JSON.parse(txt); if (r.ok) return dados; } catch {}
+  throw Object.assign(new Error(/rate|too many|slot|load/i.test(txt) || r.status === 429 ? OCUPADA
+    : `Resposta inválida da base pública (HTTP ${r.status})`), { status: r.status });
+}
+
+// Primeiro espelho que devolver JSON ganha. Se todos falharem, sobe o erro mais informativo:
+// timeout (lenta) > 5xx (consulta estourou) > rate limit > o que vier.
+export function corrida(q, ms, espelhos = OVERPASS) {
+  return new Promise((resolve, reject) => {
+    const prazo = AbortSignal.timeout(ms);
+    const ctrls = [], erros = [];
+    let prox = 0, ativos = 0, feito = false, timer;
+    const fim = () => { feito = true; clearTimeout(timer); ctrls.forEach((c) => c.abort()); };
+    const lancar = () => {
+      clearTimeout(timer);
+      if (feito || prox >= espelhos.length) return;
+      const c = new AbortController(); ctrls.push(c); ativos++;
+      umEspelho(espelhos[prox++], q, AbortSignal.any([prazo, c.signal])).then(
+        (d) => { if (!feito) { fim(); resolve(d); } },
+        (e) => {
+          ativos--; if (feito) return;
+          erros.push(e);
+          if (prox < espelhos.length && !prazo.aborted) return lancar();
+          if (!ativos) {
+            fim();
+            reject(erros.find((x) => x.name === 'TimeoutError') ?? erros.find((x) => x.status >= 500)
+              ?? erros.find((x) => x.message === OCUPADA) ?? erros[0]);
+          }
+        });
+      if (prox < espelhos.length) timer = setTimeout(lancar, ESCALA);
+    };
+    lancar();
+  });
+}
+
+// Nominatim resolve "Curitiba, Paraná" pro id da fronteira em ~0,5s, tolerante a acento. No
+// Overpass, achar a mesma área por nome (país → estado → cidade) custava 7s, e a regex sem acento
+// 3-4x isso — era a maior parte da espera. Cache por instância: a mesma cidade não pergunta 2x.
+// Só aceita fronteira administrativa com o MESMO nome digitado (sem acento); se não bater, cai
+// pra resolução antiga por nome no Overpass, que continua aí como rede de segurança.
+const AREAS = new Map();
+const semAcento = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const NAO_CIDADE = new Set(['country', 'state', 'region', 'county', 'state_district', 'province']);
+export async function areaNominatim(paisId, { escopo, estado, cidade }, ms = 6000) {
+  if (escopo === 'pais') return null;
+  const p = PAISES[paisId], nomeEstado = p.estados[estado] ?? estado;
+  const alvo = escopo === 'cidade' ? cidade : nomeEstado;
+  const k = [paisId, escopo, semAcento(nomeEstado), semAcento(cidade)].join('|');
+  if (AREAS.has(k)) return AREAS.get(k);
+  const qs = new URLSearchParams({ format: 'jsonv2', limit: '8', countrycodes: paisId.toLowerCase() });
+  if (escopo === 'cidade') { qs.set('city', cidade); qs.set('state', nomeEstado); } else qs.set('state', nomeEstado);
+  try {
+    const r = await fetch(`${NOMINATIM}?${qs}`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(Math.max(ms, 1000)) });
+    const lista = await r.json();
+    const hit = (Array.isArray(lista) ? lista : []).find((x) => x.osm_type === 'relation' && x.class === 'boundary' &&
+      semAcento(x.name) === semAcento(alvo) && (escopo === 'cidade' ? !NAO_CIDADE.has(x.addresstype) : true));
+    const id = hit ? 3600000000 + Number(hit.osm_id) : null;
+    if (id) AREAS.set(k, id);
+    return id;
+  } catch { return null; }
+}
+
+async function overpass(cat, regiao, bruto, prazo = Date.now() + ORCAMENTO) {
   const p = PAISES[regiao.pais];
-  // na Vercel a function morre em 60s: pedir 180s ao Overpass só faria o usuário esperar por nada.
   // `regiao.espera` é a varredura nacional pedindo menos por estado — ela tem vários pra fazer.
-  // ponytail: 2 espelhos tentados em sequência somam até 2×(espera-5)s numa query cidade/estado
-  // só — com o teto de 50 isso chega perto dos 60s da function (mirror caído = timeout sem JSON).
-  // Não apertei aqui pra não mudar o comportamento de buscas legítimas e lentas; se acontecer,
-  // baixe este teto (ex.: 25) ou pare de tentar o 2º espelho quando SERVERLESS.
-  const espera = Math.min(regiao.espera ?? TIMEOUT[regiao.escopo], SERVERLESS ? 50 : 180);
+  const espera = Math.min(regiao.espera ?? TIMEOUT[regiao.escopo], SERVERLESS ? 40 : 180);
+  // o teste dos sites roda depois e precisa da reserva dele: o Overpass só usa o que sobra
+  const fimOverpass = prazo - RESERVA_SITES;
+  const resta = () => fimOverpass - Date.now();
+
+  const id = await areaNominatim(regiao.pais, regiao, Math.min(6000, resta() - 3000));
+  const tentativas = [...(id ? [`area(id:${id})->.a;`] : []), ...areasAlvo(p, regiao)];
 
   let erro;
-  for (const areas of areasAlvo(p, regiao)) {
-    const q = `[out:json][timeout:${espera}];
+  for (const areas of tentativas) {
+    const ms = Math.min(espera * 1000, resta());
+    // sem tempo pra outra tentativa: melhor responder agora do que a Vercel matar a function
+    if (ms < 3000) { erro ??= regiao.escopo === 'cidade' ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera); break; }
+    // [timeout] do Overpass um pouco abaixo do nosso: se ele desistir, devolve o motivo em vez de cortar a conexão
+    const q = `[out:json][timeout:${Math.max(Math.floor(ms / 1000) - 2, 3)}];
 ${areas}
 (${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
 out center tags ${bruto};
 .a out tags;`;
-    for (const url of OVERPASS) {
-      try {
-        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA },
-          body: q, signal: AbortSignal.timeout((espera - 5) * 1000) });
-        const txt = await r.text();
-        let dados;
-        // sob carga o Overpass responde XML/HTML de rate limit em vez de JSON
-        try { dados = JSON.parse(txt); } catch {
-          // 504/500 numa área grande é a consulta estourando, não a base ocupada
-          if (r.status >= 500 && regiao.escopo !== 'cidade') throw GRANDE_DEMAIS(regiao.escopo, espera);
-          erro = new Error(/rate|too many|slot|load/i.test(txt)
-            ? 'Base pública ocupada no momento (limite de requisições) — tente de novo em alguns segundos'
-            : `Resposta inválida da base pública (HTTP ${r.status})`);
-          continue;
-        }
-        if (!r.ok) { erro = new Error(`Overpass ${r.status}`); continue; }
-        // Consulta estourada volta com HTTP 200, elements vazio e o motivo só no `remark`.
-        // Sem olhar aqui, a busca impossível era reportada como "nada encontrado na região".
-        if (/timed out|out of memory|runtime error/i.test(dados.remark ?? ''))
-          throw GRANDE_DEMAIS(regiao.escopo, espera);
-        const els = dados.elements ?? [];
-        // a área sempre volta (para pegar o nome canônico do município); só conta POI de verdade
-        if (els.some((e) => e.type !== 'area')) return els;
-        erro = null;
-        break;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
-      } catch (e) {
-        // nosso próprio AbortSignal estourando é o MESMO caso do Overpass devolver 5xx: a
-        // consulta é grande demais pro tempo que sobrou. Sem isso o erro subia cru e derrubava
-        // a mineração inteira em vez de pular a região (era o timeout puro no país inteiro).
-        erro = e.name === 'TimeoutError' ? GRANDE_DEMAIS(regiao.escopo, espera) : e;
-        if (erro.fatal) break;
-      }
+    let dados;
+    try {
+      dados = await corrida(q, ms);
+    } catch (e) {
+      // nosso timeout: em cidade é base lenta (erro de verdade, para tudo); em estado/região é a
+      // consulta grande demais pro tempo — `fatal` faz a varredura nacional pular esse estado
+      if (e.name === 'TimeoutError') throw regiao.escopo === 'cidade' ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera);
+      // 504/500 numa área grande é a consulta estourando, não a base ocupada
+      if (e.status >= 500 && regiao.escopo !== 'cidade') throw GRANDE_DEMAIS(regiao.escopo, espera);
+      erro = e;
+      continue;
     }
-    if (erro?.fatal) break;
+    // Consulta estourada volta com HTTP 200, elements vazio e o motivo só no `remark`.
+    // Sem olhar aqui, a busca impossível era reportada como "nada encontrado na região".
+    if (/timed out|out of memory|runtime error/i.test(dados.remark ?? ''))
+      throw regiao.escopo === 'cidade' && !/memory/i.test(dados.remark) ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera);
+    const els = dados.elements ?? [];
+    // a área sempre volta (para pegar o nome canônico do município); só conta POI de verdade
+    if (els.some((e) => e.type !== 'area')) return els;
+    erro = null;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
   }
   if (erro) throw erro;
   return [];
@@ -348,7 +422,7 @@ const BLOQUEIO = new Set([401, 403, 405, 406, 429, 503]);
 const WA_LINK = /(?:wa\.me|(?:api|web)\.whatsapp\.com\/send(?:\/)?\?phone=)\/?(\+?\d[\d\s-]{7,17})/i;
 const zapNaPagina = async (r) => (String(await r.text()).match(WA_LINK)?.[1] ?? '').replace(/\D/g, '');
 
-async function checarSite(raw) {
+async function checarSite(raw, prazo = Date.now() + RESERVA_SITES) {
   if (!raw) return { site: '', site_status: 'nenhum', site_ms: null };
   let u;
   try { u = new URL(/^https?:\/\//.test(raw) ? raw : 'https://' + raw); } catch { return { site: '', site_status: 'nenhum', site_ms: null }; }
@@ -360,8 +434,11 @@ async function checarSite(raw) {
   let ultimo = 'nenhum';
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     const t = Date.now();
+    // a 2ª tentativa só entra se couber no prazo da resposta inteira
+    const ms = Math.min(5000, prazo - t - 500);
+    if (ms < 1500 && tentativa) break;
     try {
-      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(5000), headers: { 'user-agent': UA } });
+      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(Math.max(ms, 1500)), headers: { 'user-agent': UA } });
       const ms = Date.now() - t;
       // Cloudflare & cia: o site está de pé, só barrou o robô. Não dá pra chamar de defasado.
       if (BLOQUEIO.has(r.status)) return { site: host, site_ms: null, site_status: 'protegido' };
@@ -438,6 +515,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   if (escopo !== 'pais' && !p.estados[estado]) throw new Error(`${p.rotulo.toLowerCase()} inválido para ${p.nome}: ${estado || '(vazio)'}`);
   if (escopo === 'cidade' && !cidade) throw new Error('cidade é obrigatória no escopo cidade');
   const regiao = { pais, escopo, estado, cidade };
+  const prazo = Date.now() + ORCAMENTO;          // a resposta inteira, Overpass + sites
   const limite = Math.min(Math.max(Number(quantidade) || 25, 1), 50);
   // De onde continuar a varredura desta (nicho, cidade, uf, apenas_whatsapp). Sem isso, minerar
   // a mesma busca de novo devolvia sempre o mesmo topo do ranking = "0 leads novos" pra sempre.
@@ -467,7 +545,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
     const achados = [];
     while (i < lista.length) {
       try {
-        const brutos = await overpass(cat, { pais, escopo: 'estado', estado: lista[i], espera: SERVERLESS ? 12 : 45 }, bruto);
+        const brutos = await overpass(cat, { pais, escopo: 'estado', estado: lista[i], espera: SERVERLESS ? 12 : 45 }, bruto, prazo);
         // o estado varrido é a UF do lead: melhor que addr:state, que quase nunca vem preenchido
         achados.push(...brutos.filter(util).map((e) => ({ ...e, estado: lista[i] })));
         varridos.push(lista[i]);
@@ -484,7 +562,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
     esgotado = i >= lista.length;
     proximo = esgotado ? 0 : i;     // próxima mineração continua no estado seguinte
   } else {
-    const brutos = await overpass(cat, regiao, bruto);
+    const brutos = await overpass(cat, regiao, bruto, prazo);
     // nome canônico do município direto do OSM: digitar "Florianopolis" não pode criar
     // uma cidade separada de "Florianópolis" na base. Em busca por estado a área resolvida
     // é o estado — aí a cidade de cada lead só pode vir do endereço dele.
@@ -506,7 +584,7 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   const leads = await Promise.all(elementos.map(async (e) => {
     const t = e.tags;
     const tel = telDe(t);
-    const { zap_site, ...site } = await checarSite(t.website || t['contact:website'] || t.url || '');
+    const { zap_site, ...site } = await checarSite(t.website || t['contact:website'] || t.url || '', prazo);
     // ordem = força da evidência: tag da empresa no OSM > link no site dela > dedução pelo número
     const zap = zapDe(t) || zap_site || (ehCelular(tel, pais) ? tel : '');
     const fonte = zapDe(t) ? 'publicado' : zap_site ? 'site' : zap ? 'celular' : '';

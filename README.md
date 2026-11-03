@@ -133,6 +133,15 @@ guarda em que estado continuar — cada mineração segue de onde a anterior par
 Estado grande demais para o segmento (restaurantes na Califórnia) é pulado e reportado, não derruba
 a busca. Orçamento de tempo: 25s na Vercel (a function morre em 60s), 90s local.
 
+**Velocidade e prazo.** A área (cidade/estado) é resolvida pelo **Nominatim** em ~0,5s, com cache
+por instância — achar a mesma área por nome dentro do Overpass custava ~7s (3-4x isso sem acento),
+e essa resolução antiga só entra se o Nominatim não achar fronteira com o mesmo nome. Os espelhos do
+Overpass correm **escalonados** (`ESCALA`, 4s): o 1º sai na hora, o próximo entra se ele não respondeu,
+e o primeiro que devolver JSON ganha. Toda mineração tem orçamento de **50s na Vercel** (`ORCAMENTO`),
+12s reservados pro teste dos sites: o servidor sempre responde JSON antes da function morrer em 60s.
+Timeout numa busca por cidade é reportado como base lenta, não como "área grande demais".
+No app, queda de conexão ("Load failed") é tentada de novo uma vez sozinha antes de virar erro.
+
 Órgão público (UBS, prefeitura, city hall, comune, NHS, site `.gov`) é descartado — não é lead B2B.
 O município é gravado com o nome canônico do OSM, então digitar "Florianopolis" não cria uma cidade
 separada de "Florianópolis". Em busca por estado/país a cidade vem do endereço do próprio lead

@@ -43,7 +43,9 @@ assert.deepEqual(viaBody.json, { ok: true }, 'cnpj com acento não quebra o pars
 // ali, "restaurantes nos EUA inteiro" era reportado como "nada encontrado" em vez de área grande.
 const realFetch = globalThis.fetch;
 let chamadas = 0;
-globalThis.fetch = async () => {
+const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'content-type': 'application/json' } });
+globalThis.fetch = async (url) => {
+  if (String(url).includes('nominatim')) return json([]);   // área não resolvida aqui: cai no Overpass por nome
   chamadas++;
   return new Response(JSON.stringify({ elements: [], remark: 'runtime error: Query timed out in "query" at line 3 after 91 seconds.' }),
     { status: 200, headers: { 'content-type': 'application/json' } });
@@ -58,6 +60,57 @@ const nacional = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', p
 assert.ok(!nacional.json.erro, 'estado que estoura não pode derrubar a varredura nacional');
 assert.equal(nacional.json.pulados.length, 51, 'os 51 estados foram tentados e reportados');
 assert.equal(chamadas, 51, 'um pedido por estado, sem repetir espelho');
+
+// Espelho engasgado não pode segurar a busca: o próximo entra depois de ESCALA ms e quem
+// responder primeiro ganha. Antes era um depois do outro, até 45s cada — a Vercel matava a
+// function no meio e o celular só mostrava "Load failed".
+const { corrida, areaNominatim } = await import('./server.mjs');
+let abortados = 0;
+globalThis.fetch = async (url, { signal }) => {
+  if (String(url).includes('lento')) return new Promise((_, nao) =>
+    signal.addEventListener('abort', () => { abortados++; nao(signal.reason); }));
+  return json({ elements: [{ type: 'node', id: 1, tags: { name: 'X' } }] });
+};
+const t0 = Date.now();
+const venceu = await corrida('q', 20000, ['https://lento/api', 'https://rapido/api']);
+assert.equal(venceu.elements.length, 1, 'o espelho que respondeu é o que vale');
+assert.ok(Date.now() - t0 < 6000, 'espelho travado não segura a busca até o timeout');
+assert.equal(abortados, 1, 'o espelho perdedor é abortado, não fica pendurado');
+
+// todos travados: estoura no prazo pedido, como TimeoutError — e não depois
+const t1 = Date.now();
+await assert.rejects(corrida('q', 800, ['https://lento/a', 'https://lento/b']), { name: 'TimeoutError' });
+assert.ok(Date.now() - t1 < 2000, 'respeita o prazo da resposta');
+
+// rate limit em todos: a mensagem diz que está ocupada, não "resposta inválida"
+globalThis.fetch = async () => new Response('<html>429 Too Many Requests</html>', { status: 429 });
+await assert.rejects(corrida('q', 5000, ['https://a/x', 'https://b/x']), /ocupada/);
+
+// Nominatim: só vale fronteira com o mesmo nome (sem acento), e o id vira área do Overpass
+globalThis.fetch = async () => json([
+  { osm_type: 'node', osm_id: 9, class: 'place', name: 'Curitiba', addresstype: 'city' },
+  { osm_type: 'relation', osm_id: 297514, class: 'boundary', name: 'Curitiba', addresstype: 'city' }]);
+assert.equal(await areaNominatim('BR', { escopo: 'cidade', estado: 'PR', cidade: 'curitiba' }), 3600297514);
+globalThis.fetch = async () => json([{ osm_type: 'relation', osm_id: 1, class: 'boundary', name: 'Região Metropolitana', addresstype: 'state' }]);
+assert.equal(await areaNominatim('BR', { escopo: 'cidade', estado: 'SC', cidade: 'Lages' }), null, 'nome diferente não é aceito');
+globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+assert.equal(await areaNominatim('BR', { escopo: 'cidade', estado: 'SC', cidade: 'Joinville' }), null, 'Nominatim fora do ar não derruba a busca');
+
+// mineração por cidade com Nominatim resolvendo: a consulta usa o id direto, sem a cascata por nome
+const queries = [];
+globalThis.fetch = async (url, op = {}) => {
+  if (String(url).includes('nominatim')) return json([{ osm_type: 'relation', osm_id: 42, class: 'boundary', name: 'Maringá', addresstype: 'city' }]);
+  if (op.method === 'POST') { queries.push(op.body);
+    return json({ elements: [{ type: 'area', id: 3600000042, tags: { name: 'Maringá' } },
+      { type: 'node', id: 7, tags: { name: 'Pizzaria Boa', phone: '+55 44 99999-0000' } }] }); }
+  throw new TypeError('sem rede pro site');
+};
+const rapida = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'BR', escopo: 'cidade', estado: 'PR', cidade: 'Maringa' });
+assert.equal(rapida.json.encontrados, 1, rapida.json.erro);
+assert.equal(queries.length, 1, 'uma consulta só ao Overpass');
+assert.match(queries[0], /area\(id:3600000042\)/, 'área pelo id do Nominatim');
+assert.equal(rapida.json.leads[0].cidade, 'Maringá', 'nome canônico continua vindo da área');
+
 globalThis.fetch = realFetch;
 
 console.log('ok — handler serverless (sem disco, sem SQLite)');
