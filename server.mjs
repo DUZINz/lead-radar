@@ -155,13 +155,13 @@ export function enriquecer(l, status) {
 const UA = 'LeadRadar/1.0 (prospeccao B2B; contato local)';
 // Ordem = confiabilidade vista de IP de nuvem. overpass-api.de limita por IP, e a Vercel divide IP
 // entre muita gente: lá ele vive devolvendo 429. private.coffee não tem limite por IP.
-const OVERPASS = ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter',
+const OVERPASS = process.env.OVERPASS_URLS ? process.env.OVERPASS_URLS.split(',') : ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 // Corrida escalonada: o 1º espelho sai na hora, o próximo entra se o anterior não respondeu em
 // ESCALA ms (ou assim que ele falhar). Ganha o primeiro que responder; os outros são abortados.
 // Antes era um depois do outro, cada um esperando até 45s — espelho caído = function morta.
-const ESCALA = 4000;
+const ESCALA = 2500;
 // Na Vercel a function morre em 60s e o celular só vê "Load failed". O servidor tem que responder
 // JSON antes disso, sempre: 50s de orçamento total, 12s dele reservados pro teste dos sites.
 const ORCAMENTO = SERVERLESS ? 50000 : 170000;
@@ -380,7 +380,9 @@ export async function areaNominatim(paisId, regiao, ms = 5000) {
   try {
     const r = await fetch(urlNominatim(paisId, regiao), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(Math.max(ms, 1000)) });
     const lista = await r.json();
-    const hit = (Array.isArray(lista) ? lista : []).find((x) => x.osm_type === 'relation' && x.class === 'boundary' &&
+    // jsonv2 chama de `category` o que o formato json chama de `class` — olhando só `class`, nenhum
+    // resultado passava e TODA busca caía na resolução lenta por nome (foi o que aconteceu em produção)
+    const hit = (Array.isArray(lista) ? lista : []).find((x) => x.osm_type === 'relation' && (x.category ?? x.class) === 'boundary' &&
       semAcento(x.name) === semAcento(alvo) && (escopo === 'cidade' ? !NAO_CIDADE.has(x.addresstype) : true));
     const id = hit ? 3600000000 + Number(hit.osm_id) : null;
     if (id) AREAS.set(k, id);
@@ -444,6 +446,11 @@ async function diagnostico(q) {
   if (!PAISES[pais] || !PAISES[pais].estados[estado]) return { erro: 'pais/estado inválido' };
   const regiao = { pais, escopo: 'cidade', estado, cidade };
   const erroDe = (e) => `${e.name}: ${e.message}`.slice(0, 200);
+  if (q.get('modo') === 'dormir') {      // calibra quanto tempo quem está lendo de fora aguenta esperar
+    const ms = Math.min(Number(q.get('ms')) || 1000, 30000);
+    await new Promise((ok) => setTimeout(ok, ms));
+    return { modo: 'dormir', ms };
+  }
   if (q.get('modo') === 'minerar') {
     const t = Date.now();
     try {
@@ -461,14 +468,16 @@ async function diagnostico(q) {
     const txt = await r.text();
     let lista; try { lista = JSON.parse(txt); } catch {}
     nominatim = { status: r.status, ms: Date.now() - t0, resultados: Array.isArray(lista)
-      ? lista.map((x) => `${x.osm_type}/${x.osm_id} ${x.class}/${x.type} ${x.addresstype} "${x.name}"`) : txt.slice(0, 200) };
+      ? lista.map((x) => `${x.osm_type}/${x.osm_id} ${x.category ?? x.class}/${x.type} ${x.addresstype} "${x.name}"`) : txt.slice(0, 200) };
   } catch (e) { nominatim = { ms: Date.now() - t0, erro: erroDe(e) }; }
   if (q.get('modo') === 'nominatim') return { modo: 'nominatim', regiao, nominatim };
   // ?id= pula o Nominatim (já medido no modo nominatim); ?id=0 força a resolução antiga por nome
   const id = q.has('id') ? Number(q.get('id')) || null : await areaNominatim(pais, regiao, 5000);
   const areas = id ? `area(id:${id})->.a;` : areasAlvo(PAISES[pais], regiao)[0];
   const q2 = consulta(CATALOGO[nicho], areas, 800, Math.max(Math.floor(espera / 1000) - 2, 3));
-  const espelhos = await Promise.all(OVERPASS.map(async (url) => {
+  // ?espelho=N testa um só: um espelho que segura a conexão não esconde o resultado dos outros
+  const alvos = q.has('espelho') ? [OVERPASS[Number(q.get('espelho'))]].filter(Boolean) : OVERPASS;
+  const espelhos = await Promise.all(alvos.map(async (url) => {
     const t = Date.now();
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q2,

@@ -107,7 +107,8 @@ await assert.rejects(corrida('q', 5000, ['https://quebrado/a', 'https://quebrado
 // Nominatim: só vale fronteira com o mesmo nome (sem acento), e o id vira área do Overpass
 globalThis.fetch = async () => json([
   { osm_type: 'node', osm_id: 9, class: 'place', name: 'Curitiba', addresstype: 'city' },
-  { osm_type: 'relation', osm_id: 297514, class: 'boundary', name: 'Curitiba', addresstype: 'city' }]);
+  // formato jsonv2, como o Nominatim responde de verdade: `category`, não `class`
+  { osm_type: 'relation', osm_id: 297514, category: 'boundary', type: 'administrative', name: 'Curitiba', addresstype: 'city' }]);
 assert.equal(await areaNominatim('BR', { escopo: 'cidade', estado: 'PR', cidade: 'curitiba' }), 3600297514);
 globalThis.fetch = async () => json([{ osm_type: 'relation', osm_id: 1, class: 'boundary', name: 'Região Metropolitana', addresstype: 'state' }]);
 assert.equal(await areaNominatim('BR', { escopo: 'cidade', estado: 'SC', cidade: 'Lages' }), null, 'nome diferente não é aceito');
@@ -117,7 +118,7 @@ assert.equal(await areaNominatim('BR', { escopo: 'cidade', estado: 'SC', cidade:
 // mineração por cidade com Nominatim resolvendo: a consulta usa o id direto, sem a cascata por nome
 const queries = [];
 globalThis.fetch = async (url, op = {}) => {
-  if (String(url).includes('nominatim')) return json([{ osm_type: 'relation', osm_id: 42, class: 'boundary', name: 'Maringá', addresstype: 'city' }]);
+  if (String(url).includes('nominatim')) return json([{ osm_type: 'relation', osm_id: 42, category: 'boundary', name: 'Maringá', addresstype: 'city' }]);
   if (op.method === 'POST') { queries.push(op.body);
     return json({ elements: [{ type: 'area', id: 3600000042, tags: { name: 'Maringá' } },
       { type: 'node', id: 7, tags: { name: 'Pizzaria Boa', phone: '+55 44 99999-0000' } }] }); }
