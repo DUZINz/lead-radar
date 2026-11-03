@@ -71,6 +71,7 @@ importa, responde e não toca em disco).
 | `GET /api/export.csv?<mesmos filtros>` | CSV com BOM e `;` — abre direto no Excel PT-BR |
 | `POST /api/minerar` `{nicho,pais,escopo,estado,cidade,quantidade,apenas_whatsapp,offset}` | **mineração real** — `pais` ∈ BR/US/PT/GB/IT, `escopo` ∈ cidade/estado/pais. Devolve `analisados` (funil), `proximo_offset`, `esgotado` e `disponiveis` (paginação) |
 | `GET /api/historico` | últimas 20 buscas |
+| `GET /api/diag?modo=nominatim\|espelhos\|qlever\|minerar&cidade=&estado=` | mede as fontes **de dentro do servidor** (IP de nuvem é tratado diferente pelas bases públicas). `espelhos` aceita `espelho=N`/`url=z\|lz4\|nchc\|fr\|ru` e `t=` (ms); `minerar` aceita `nicho`, `wpp=1`, `sites=0` |
 
 ## Mineração de leads reais
 
@@ -133,11 +134,15 @@ guarda em que estado continuar — cada mineração segue de onde a anterior par
 Estado grande demais para o segmento (restaurantes na Califórnia) é pulado e reportado, não derruba
 a busca. Orçamento de tempo: 25s na Vercel (a function morre em 60s), 90s local.
 
-**Velocidade e prazo.** A área (cidade/estado) é resolvida pelo **Nominatim** em ~0,5s, com cache
-por instância — achar a mesma área por nome dentro do Overpass custava ~7s (3-4x isso sem acento),
-e essa resolução antiga só entra se o Nominatim não achar fronteira com o mesmo nome. Os espelhos do
-Overpass correm **escalonados** (`ESCALA`, 4s): o 1º sai na hora, o próximo entra se ele não respondeu,
-e o primeiro que devolver JSON ganha. Toda mineração tem orçamento de **50s na Vercel** (`ORCAMENTO`),
+**Fontes e velocidade.** A área (cidade/estado) é resolvida pelo **Nominatim** em ~0,5s, com cache
+por instância (formato `jsonv2`: o campo é `category`, não `class`). Com o id da fronteira, os
+estabelecimentos vêm do **QLever** (Univ. de Freiburg — o mesmo OpenStreetMap, via SPARQL, com
+"está dentro de" pré-calculado): ~1-2s por cidade, medido de dentro da Vercel. É serviço público de
+pesquisa, sem SLA. O **Overpass** virou reserva — em 03/11/2026, visto da Vercel, overpass-api.de
+respondia 502 (sem capacidade), mail.ru 504, e private.coffee/kumi nem conectavam. Os espelhos correm
+**escalonados** (`ESCALA`, 2,5s): o 1º sai na hora, o próximo entra se ele não respondeu (ou na hora,
+se falhou), e ganha a primeira resposta que trouxer a área. Remark de erro (`runtime error`) e
+resposta sem a área são falha daquele espelho, não da busca. Toda mineração tem orçamento de **50s na Vercel** (`ORCAMENTO`),
 12s reservados pro teste dos sites: o servidor sempre responde JSON antes da function morrer em 60s.
 Timeout numa busca por cidade é reportado como base lenta, não como "área grande demais".
 No app, queda de conexão ("Load failed") é tentada de novo uma vez sozinha antes de virar erro.

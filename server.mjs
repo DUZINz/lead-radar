@@ -153,10 +153,12 @@ export function enriquecer(l, status) {
 // ---------------- mineração de leads reais (OpenStreetMap / Overpass) ----------------
 
 const UA = 'LeadRadar/1.0 (prospeccao B2B; contato local)';
-// Ordem = confiabilidade vista de IP de nuvem. overpass-api.de limita por IP, e a Vercel divide IP
-// entre muita gente: lá ele vive devolvendo 429. private.coffee não tem limite por IP.
-const OVERPASS = process.env.OVERPASS_URLS ? process.env.OVERPASS_URLS.split(',') : ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// Reserva do QLever. Ordem medida de dentro da Vercel (03/11/2026): overpass-api.de responde na
+// hora (502 quando está sem capacidade), mail.ru também (504); private.coffee e kumi nem conectam
+// de lá e seguram a conexão — ficam por último, pra só entrarem se o resto já falhou.
+const OVERPASS = process.env.OVERPASS_URLS ? process.env.OVERPASS_URLS.split(',') : ['https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter'];
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 // QLever (Univ. de Freiburg): o MESMO OpenStreetMap, em outra infraestrutura — SPARQL sobre o
 // planeta inteiro, com "está dentro de" pré-calculado. Medido de dentro da Vercel em 03/11/2026:
