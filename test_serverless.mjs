@@ -52,14 +52,14 @@ globalThis.fetch = async (url) => {
 };
 const estourou = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'US', escopo: 'estado', estado: 'CA' });
 assert.match(estourou.json.erro, /grande demais/, 'timeout de consulta não pode virar "nada encontrado"');
-assert.equal(chamadas, 1, 'área grande demais não se resolve tentando o outro espelho');
+assert.equal(chamadas, 4, 'cada espelho tenta uma vez — e para no 1º filtro de nome: área grande demais é fatal');
 
 // país inteiro é varredura estado a estado: um estado que estoura é pulado, não derruba a busca
 chamadas = 0;
 const nacional = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'US', escopo: 'pais' });
 assert.ok(!nacional.json.erro, 'estado que estoura não pode derrubar a varredura nacional');
 assert.equal(nacional.json.pulados.length, 51, 'os 51 estados foram tentados e reportados');
-assert.equal(chamadas, 51, 'um pedido por estado, sem repetir espelho');
+assert.equal(chamadas, 51 * 4, 'um pedido por espelho em cada estado, sem repetir');
 
 // Espelho engasgado não pode segurar a busca: o próximo entra depois de ESCALA ms e quem
 // responder primeiro ganha. Antes era um depois do outro, até 45s cada — a Vercel matava a
@@ -69,11 +69,11 @@ let abortados = 0;
 globalThis.fetch = async (url, { signal }) => {
   if (String(url).includes('lento')) return new Promise((_, nao) =>
     signal.addEventListener('abort', () => { abortados++; nao(signal.reason); }));
-  return json({ elements: [{ type: 'node', id: 1, tags: { name: 'X' } }] });
+  return json({ elements: [{ type: 'area', id: 3600000001, tags: { name: 'A' } }, { type: 'node', id: 1, tags: { name: 'X' } }] });
 };
 const t0 = Date.now();
 const venceu = await corrida('q', 20000, ['https://lento/api', 'https://rapido/api']);
-assert.equal(venceu.elements.length, 1, 'o espelho que respondeu é o que vale');
+assert.equal(venceu.elements.length, 2, 'o espelho que respondeu é o que vale');
 assert.ok(Date.now() - t0 < 6000, 'espelho travado não segura a busca até o timeout');
 assert.equal(abortados, 1, 'o espelho perdedor é abortado, não fica pendurado');
 
@@ -85,6 +85,24 @@ assert.ok(Date.now() - t1 < 2000, 'respeita o prazo da resposta');
 // rate limit em todos: a mensagem diz que está ocupada, não "resposta inválida"
 globalThis.fetch = async () => new Response('<html>429 Too Many Requests</html>', { status: 429 });
 await assert.rejects(corrida('q', 5000, ['https://a/x', 'https://b/x']), /ocupada/);
+
+// Espelho que responde rápido e errado não pode ganhar: instância quebrada devolve HTTP 200 com
+// o erro só no remark, e espelho sem as áreas geradas devolve vazio na hora. Os dois perdiam a
+// corrida pro espelho bom — foi o que derrubou TODA busca com "base lenta" no deploy anterior.
+const bom = { elements: [{ type: 'area', id: 3600000009, tags: { name: 'Curitiba' } }, { type: 'node', id: 5, tags: { name: 'Bar' } }] };
+const atraso = (ms, v) => new Promise((ok) => setTimeout(() => ok(v), ms));
+globalThis.fetch = async (url) => String(url).includes('quebrado')
+  ? json({ elements: [], remark: 'runtime error: open64: 2 No such file or directory /osm3s_v0.7.62_areas Dispatcher_Client::1' })
+  : String(url).includes('semarea') ? json({ elements: [] }) : atraso(300, json(bom));
+assert.deepEqual(await corrida('q', 10000, ['https://quebrado/a', 'https://bom/a']), bom, 'remark de erro é falha daquele espelho');
+assert.deepEqual(await corrida('q', 10000, ['https://semarea/a', 'https://bom/a']), bom, 'resposta sem a área não ganha');
+// dois espelhos concordando que a área não existe é "não existe" — não espera o resto até o prazo
+const t2 = Date.now();
+const nada = await corrida('q', 20000, ['https://semarea/a', 'https://semarea/b', 'https://lento/c']);
+assert.equal(nada.elements.length, 0);
+assert.ok(Date.now() - t2 < 2000, 'consenso de 2 resolve sem esperar o espelho travado');
+// todos com defeito: erro de instabilidade, não "lenta"
+await assert.rejects(corrida('q', 5000, ['https://quebrado/a', 'https://quebrado/b']), (e) => e.tipo === 'espelho');
 
 // Nominatim: só vale fronteira com o mesmo nome (sem acento), e o id vira área do Overpass
 globalThis.fetch = async () => json([
@@ -110,6 +128,14 @@ assert.equal(rapida.json.encontrados, 1, rapida.json.erro);
 assert.equal(queries.length, 1, 'uma consulta só ao Overpass');
 assert.match(queries[0], /area\(id:3600000042\)/, 'área pelo id do Nominatim');
 assert.equal(rapida.json.leads[0].cidade, 'Maringá', 'nome canônico continua vindo da área');
+
+
+// /api/diag responde JSON nos dois modos (é o que dá pra abrir de fora pra ver a Vercel por dentro)
+const dEsp = await chamar('GET', '/api/diag?cidade=Maringa&estado=PR');
+assert.equal(dEsp.json.espelhos.length, 4, 'um relatório por espelho');
+assert.ok(dEsp.json.espelhos.every((e) => e.pois === 1 && e.area), JSON.stringify(dEsp.json.espelhos));
+const dMin = await chamar('GET', '/api/diag?modo=minerar&cidade=Maringa&estado=PR');
+assert.equal(dMin.json.encontrados, 1, JSON.stringify(dMin.json));
 
 globalThis.fetch = realFetch;
 

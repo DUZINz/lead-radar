@@ -291,41 +291,65 @@ const GRANDE_DEMAIS = (escopo, seg) => Object.assign(new Error(
 // Base lenta ≠ área grande. Timeout NOSSO numa cidade é o espelho engasgado (ou todos ocupados),
 // não consulta impossível — dizer "busque por cidade" pra quem já buscou por cidade não ajuda.
 const LENTA = () => new Error('A base pública está lenta agora e não respondeu a tempo. Tente de novo em alguns segundos.');
+const INSTAVEL = () => new Error('A base pública está instável agora (todos os servidores falharam). Tente de novo em alguns segundos.');
 const OCUPADA = 'Base pública ocupada no momento (limite de requisições) — tente de novo em alguns segundos';
 
+// Espelho pode responder RÁPIDO e ERRADO: instância sem as áreas geradas, dispatcher quebrado,
+// "duplicate_query" (a mesma consulta ainda rodando lá, de uma tentativa anterior). Isso volta
+// HTTP 200 com JSON e o erro só no `remark` — e, por ser o mais rápido, ganhava a corrida e
+// derrubava a busca inteira com "base lenta". Erro no remark agora é falha DAQUELE espelho.
 async function umEspelho(url, q, signal) {
   const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q, signal });
   const txt = await r.text();
+  let dados;
+  try { dados = JSON.parse(txt); } catch {}
   // sob carga o Overpass responde XML/HTML de rate limit em vez de JSON
-  try { const dados = JSON.parse(txt); if (r.ok) return dados; } catch {}
-  throw Object.assign(new Error(/rate|too many|slot|load/i.test(txt) || r.status === 429 ? OCUPADA
-    : `Resposta inválida da base pública (HTTP ${r.status})`), { status: r.status });
+  if (!dados || !r.ok) throw Object.assign(new Error(/rate|too many|slot|load/i.test(txt) || r.status === 429 ? OCUPADA
+    : `Resposta inválida da base pública (HTTP ${r.status})`), { status: r.status, espelho: url });
+  const remark = String(dados.remark ?? '');
+  if (/timed out/i.test(remark)) throw Object.assign(new Error(remark), { tipo: 'tempo', espelho: url });
+  if (/out of memory/i.test(remark)) throw Object.assign(new Error(remark), { tipo: 'memoria', espelho: url });
+  if (/runtime error/i.test(remark)) throw Object.assign(new Error(remark), { tipo: 'espelho', espelho: url });
+  return dados;
 }
 
-// Primeiro espelho que devolver JSON ganha. Se todos falharem, sobe o erro mais informativo:
-// timeout (lenta) > 5xx (consulta estourou) > rate limit > o que vier.
-export function corrida(q, ms, espelhos = OVERPASS) {
+// a consulta sempre termina em `.a out tags`: se a área não veio, aquele espelho não achou a área
+// (nome que não existe — ou instância sem as áreas geradas, que responde vazio na hora)
+const temArea = (d) => (d.elements ?? []).some((e) => e.type === 'area');
+
+// Corrida escalonada: o 1º espelho sai na hora, o próximo entra se o anterior não respondeu em
+// ESCALA ms — ou NA HORA, se ele falhou ou veio sem a área. Ganha a primeira resposta com área.
+// Sem área em nenhum, só vale "não existe" quando 2 espelhos concordam (ou todos responderam):
+// um espelho sem áreas geradas não pode, sozinho, dizer que Curitiba não existe.
+// Se todos falharem, sobe o erro mais informativo: memória > tempo > 5xx > rate limit > defeito.
+export function corrida(q, ms, espelhos = OVERPASS, { conclusivo = temArea, consenso = 2 } = {}) {
   return new Promise((resolve, reject) => {
     const prazo = AbortSignal.timeout(ms);
-    const ctrls = [], erros = [];
+    const ctrls = [], erros = [], vazios = [];
     let prox = 0, ativos = 0, feito = false, timer;
     const fim = () => { feito = true; clearTimeout(timer); ctrls.forEach((c) => c.abort()); };
+    const seguir = () => {
+      if (feito) return;
+      if (prox < espelhos.length && !prazo.aborted) return lancar();
+      if (ativos) return;
+      fim();
+      if (vazios.length) return resolve(vazios[0]);
+      reject(erros.find((x) => x.tipo === 'memoria') ?? erros.find((x) => x.name === 'TimeoutError' || x.tipo === 'tempo')
+        ?? erros.find((x) => x.status >= 500) ?? erros.find((x) => x.message === OCUPADA) ?? erros[0]);
+    };
     const lancar = () => {
       clearTimeout(timer);
       if (feito || prox >= espelhos.length) return;
       const c = new AbortController(); ctrls.push(c); ativos++;
       umEspelho(espelhos[prox++], q, AbortSignal.any([prazo, c.signal])).then(
-        (d) => { if (!feito) { fim(); resolve(d); } },
-        (e) => {
+        (d) => {
           ativos--; if (feito) return;
-          erros.push(e);
-          if (prox < espelhos.length && !prazo.aborted) return lancar();
-          if (!ativos) {
-            fim();
-            reject(erros.find((x) => x.name === 'TimeoutError') ?? erros.find((x) => x.status >= 500)
-              ?? erros.find((x) => x.message === OCUPADA) ?? erros[0]);
-          }
-        });
+          if (conclusivo(d)) { fim(); return resolve(d); }
+          vazios.push(d);
+          if (vazios.length >= consenso) { fim(); return resolve(d); }
+          seguir();
+        },
+        (e) => { ativos--; if (feito) return; erros.push(e); seguir(); });
       if (prox < espelhos.length) timer = setTimeout(lancar, ESCALA);
     };
     lancar();
@@ -340,16 +364,21 @@ export function corrida(q, ms, espelhos = OVERPASS) {
 const AREAS = new Map();
 const semAcento = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const NAO_CIDADE = new Set(['country', 'state', 'region', 'county', 'state_district', 'province']);
-export async function areaNominatim(paisId, { escopo, estado, cidade }, ms = 6000) {
+const urlNominatim = (paisId, { escopo, estado, cidade }) => {
+  const nomeEstado = PAISES[paisId].estados[estado] ?? estado;
+  const qs = new URLSearchParams({ format: 'jsonv2', limit: '8', countrycodes: paisId.toLowerCase(), state: nomeEstado });
+  if (escopo === 'cidade') qs.set('city', cidade);
+  return `${NOMINATIM}?${qs}`;
+};
+export async function areaNominatim(paisId, regiao, ms = 5000) {
+  const { escopo, estado, cidade } = regiao;
   if (escopo === 'pais') return null;
-  const p = PAISES[paisId], nomeEstado = p.estados[estado] ?? estado;
+  const nomeEstado = PAISES[paisId].estados[estado] ?? estado;
   const alvo = escopo === 'cidade' ? cidade : nomeEstado;
   const k = [paisId, escopo, semAcento(nomeEstado), semAcento(cidade)].join('|');
   if (AREAS.has(k)) return AREAS.get(k);
-  const qs = new URLSearchParams({ format: 'jsonv2', limit: '8', countrycodes: paisId.toLowerCase() });
-  if (escopo === 'cidade') { qs.set('city', cidade); qs.set('state', nomeEstado); } else qs.set('state', nomeEstado);
   try {
-    const r = await fetch(`${NOMINATIM}?${qs}`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(Math.max(ms, 1000)) });
+    const r = await fetch(urlNominatim(paisId, regiao), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(Math.max(ms, 1000)) });
     const lista = await r.json();
     const hit = (Array.isArray(lista) ? lista : []).find((x) => x.osm_type === 'relation' && x.class === 'boundary' &&
       semAcento(x.name) === semAcento(alvo) && (escopo === 'cidade' ? !NAO_CIDADE.has(x.addresstype) : true));
@@ -359,6 +388,12 @@ export async function areaNominatim(paisId, { escopo, estado, cidade }, ms = 600
   } catch { return null; }
 }
 
+const consulta = (cat, areas, bruto, seg) => `[out:json][timeout:${seg}];
+${areas}
+(${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
+out center tags ${bruto};
+.a out tags;`;
+
 async function overpass(cat, regiao, bruto, prazo = Date.now() + ORCAMENTO) {
   const p = PAISES[regiao.pais];
   // `regiao.espera` é a varredura nacional pedindo menos por estado — ela tem vários pra fazer.
@@ -366,44 +401,82 @@ async function overpass(cat, regiao, bruto, prazo = Date.now() + ORCAMENTO) {
   // o teste dos sites roda depois e precisa da reserva dele: o Overpass só usa o que sobra
   const fimOverpass = prazo - RESERVA_SITES;
   const resta = () => fimOverpass - Date.now();
+  const cidade = regiao.escopo === 'cidade';
 
-  const id = await areaNominatim(regiao.pais, regiao, Math.min(6000, resta() - 3000));
+  const id = await areaNominatim(regiao.pais, regiao, Math.min(5000, resta() - 3000));
   const tentativas = [...(id ? [`area(id:${id})->.a;`] : []), ...areasAlvo(p, regiao)];
 
   let erro;
   for (const areas of tentativas) {
     const ms = Math.min(espera * 1000, resta());
     // sem tempo pra outra tentativa: melhor responder agora do que a Vercel matar a function
-    if (ms < 3000) { erro ??= regiao.escopo === 'cidade' ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera); break; }
-    // [timeout] do Overpass um pouco abaixo do nosso: se ele desistir, devolve o motivo em vez de cortar a conexão
-    const q = `[out:json][timeout:${Math.max(Math.floor(ms / 1000) - 2, 3)}];
-${areas}
-(${cat.osm.map((f) => `nwr(area.a)[${f.split('=')[0]}=${JSON.stringify(f.split('=')[1])}];`).join('\n ')});
-out center tags ${bruto};
-.a out tags;`;
+    if (ms < 3000) { erro ??= cidade ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera); break; }
     let dados;
     try {
-      dados = await corrida(q, ms);
+      // [timeout] do Overpass um pouco abaixo do nosso: se ele desistir, devolve o motivo em vez de cortar a conexão
+      dados = await corrida(consulta(cat, areas, bruto, Math.max(Math.floor(ms / 1000) - 2, 3)), ms);
     } catch (e) {
-      // nosso timeout: em cidade é base lenta (erro de verdade, para tudo); em estado/região é a
-      // consulta grande demais pro tempo — `fatal` faz a varredura nacional pular esse estado
-      if (e.name === 'TimeoutError') throw regiao.escopo === 'cidade' ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera);
-      // 504/500 numa área grande é a consulta estourando, não a base ocupada
-      if (e.status >= 500 && regiao.escopo !== 'cidade') throw GRANDE_DEMAIS(regiao.escopo, espera);
-      erro = e;
+      // Todos os espelhos falharam nesta tentativa. Memória estourada e (fora da cidade) tempo ou
+      // 5xx são a consulta grande demais: `fatal` faz a varredura nacional pular esse estado.
+      // Em cidade, tempo é base lenta e defeito/5xx é base instável — erro de verdade, para tudo.
+      if (e.tipo === 'memoria') throw GRANDE_DEMAIS(regiao.escopo, espera);
+      if (e.name === 'TimeoutError' || e.tipo === 'tempo') throw cidade ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera);
+      if (e.status >= 500) throw cidade ? INSTAVEL() : GRANDE_DEMAIS(regiao.escopo, espera);
+      erro = e.message === OCUPADA ? e : INSTAVEL();
       continue;
     }
-    // Consulta estourada volta com HTTP 200, elements vazio e o motivo só no `remark`.
-    // Sem olhar aqui, a busca impossível era reportada como "nada encontrado na região".
-    if (/timed out|out of memory|runtime error/i.test(dados.remark ?? ''))
-      throw regiao.escopo === 'cidade' && !/memory/i.test(dados.remark) ? LENTA() : GRANDE_DEMAIS(regiao.escopo, espera);
     const els = dados.elements ?? [];
     // a área sempre volta (para pegar o nome canônico do município); só conta POI de verdade
     if (els.some((e) => e.type !== 'area')) return els;
-    erro = null;                      // área resolveu mas veio vazia: tenta o próximo filtro de nome
+    erro = null;                      // área vazia ou não achada: tenta o próximo filtro de nome
   }
   if (erro) throw erro;
   return [];
+}
+
+// GET /api/diag — a mineração vista DE DENTRO da Vercel. IP de nuvem é tratado diferente pelas
+// bases públicas (limite por IP, bloqueio de faixa), então teste local não diz nada sobre lá.
+// ?modo=espelhos (padrão): Nominatim + cada espelho do Overpass sozinho, em paralelo, com a
+// consulta real de uma cidade. ?modo=minerar: a mineração inteira, cronometrada.
+async function diagnostico(q) {
+  const pais = q.get('pais') || 'BR', estado = q.get('estado') || 'PR', cidade = q.get('cidade') || 'Curitiba';
+  const nicho = CATALOGO[q.get('nicho')] ? q.get('nicho') : 'restaurantes';
+  if (!PAISES[pais] || !PAISES[pais].estados[estado]) return { erro: 'pais/estado inválido' };
+  const regiao = { pais, escopo: 'cidade', estado, cidade };
+  const erroDe = (e) => `${e.name}: ${e.message}`.slice(0, 200);
+  if (q.get('modo') === 'minerar') {
+    const t = Date.now();
+    try {
+      const m = await minerar({ nicho, pais, escopo: 'cidade', estado, cidade, quantidade: 5, apenas_whatsapp: q.get('wpp') === '1' });
+      return { modo: 'minerar', regiao, nicho, ms: Date.now() - t, encontrados: m.encontrados, disponiveis: m.disponiveis,
+        analisados: m.analisados, amostra: m.leads.slice(0, 5).map((l) => `${l.nome} · ${l.whatsapp || l.telefone || 'sem tel'} · ${l.site_status}`) };
+    } catch (e) { return { modo: 'minerar', regiao, nicho, ms: Date.now() - t, erro: erroDe(e) }; }
+  }
+  const t0 = Date.now();
+  let nominatim;
+  try {
+    const r = await fetch(urlNominatim(pais, regiao), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
+    const txt = await r.text();
+    let lista; try { lista = JSON.parse(txt); } catch {}
+    nominatim = { status: r.status, ms: Date.now() - t0, resultados: Array.isArray(lista)
+      ? lista.map((x) => `${x.osm_type}/${x.osm_id} ${x.class}/${x.type} ${x.addresstype} "${x.name}"`) : txt.slice(0, 200) };
+  } catch (e) { nominatim = { ms: Date.now() - t0, erro: erroDe(e) }; }
+  const id = await areaNominatim(pais, regiao);
+  const areas = id ? `area(id:${id})->.a;` : areasAlvo(PAISES[pais], regiao)[0];
+  const q2 = consulta(CATALOGO[nicho], areas, 800, 20);
+  const espelhos = await Promise.all(OVERPASS.map(async (url) => {
+    const t = Date.now();
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q2,
+        signal: AbortSignal.timeout(25000) });
+      const txt = await r.text();
+      let d; try { d = JSON.parse(txt); } catch {}
+      return { url, status: r.status, ms: Date.now() - t, json: !!d, remark: d?.remark,
+        area: d ? temArea(d) : undefined, pois: d?.elements?.filter((e) => e.type !== 'area').length,
+        inicio: d ? undefined : txt.replace(/\s+/g, ' ').slice(0, 160) };
+    } catch (e) { return { url, ms: Date.now() - t, erro: erroDe(e) }; }
+  }));
+  return { modo: 'espelhos', regiao, nicho, area_id: id, consulta_area: areas, nominatim, espelhos };
 }
 
 // mede o site de verdade: rapido = moderno, arrastado = lento, quebrado/timeout = defasado,
@@ -747,6 +820,7 @@ export default async function handler(req, res) {
       console.log(`minerado: ${r.novos} novos de ${r.encontrados} em ${((Date.now() - t) / 1000).toFixed(1)}s`);
       return json(res, r);
     }
+    if (req.method === 'GET' && p === '/api/diag') return json(res, await diagnostico(url.searchParams));
 
     if (req.method === 'POST' && (p === '/api/excluir' || p === '/api/restaurar')) {
       const { cnpjs = [] } = await corpo(req);
