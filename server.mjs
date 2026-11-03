@@ -158,6 +158,20 @@ const UA = 'LeadRadar/1.0 (prospeccao B2B; contato local)';
 const OVERPASS = process.env.OVERPASS_URLS ? process.env.OVERPASS_URLS.split(',') : ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+// QLever (Univ. de Freiburg): o MESMO OpenStreetMap, em outra infraestrutura — SPARQL sobre o
+// planeta inteiro, com "está dentro de" pré-calculado. Medido de dentro da Vercel em 03/11/2026:
+// overpass-api.de 502 (sem capacidade), mail.ru 504, private.coffee e kumi nem conectam. Com o id
+// da fronteira vindo do Nominatim, o QLever é a fonte principal; o Overpass vira reserva.
+const QLEVER = process.env.QLEVER_URL || 'https://qlever.cs.uni-freiburg.de/api/osm-planet';
+const KEY = 'https://www.openstreetmap.org/wiki/Key:';
+
+// AbortSignal.timeout usa timer "unref", e espelho travado chegou a segurar a resposta da Vercel
+// além do prazo. Timer comum, desarmado no fim, garante que o aborto dispara na hora certa.
+function prazoDe(ms) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), ms);
+  return { signal: c.signal, desarmar: () => clearTimeout(t) };
+}
 // Corrida escalonada: o 1º espelho sai na hora, o próximo entra se o anterior não respondeu em
 // ESCALA ms (ou assim que ele falhar). Ganha o primeiro que responder; os outros são abortados.
 // Antes era um depois do outro, cada um esperando até 45s — espelho caído = function morta.
@@ -324,10 +338,10 @@ const temArea = (d) => (d.elements ?? []).some((e) => e.type === 'area');
 // Se todos falharem, sobe o erro mais informativo: memória > tempo > 5xx > rate limit > defeito.
 export function corrida(q, ms, espelhos = OVERPASS, { conclusivo = temArea, consenso = 2 } = {}) {
   return new Promise((resolve, reject) => {
-    const prazo = AbortSignal.timeout(ms);
+    const { signal: prazo, desarmar } = prazoDe(ms);
     const ctrls = [], erros = [], vazios = [];
     let prox = 0, ativos = 0, feito = false, timer;
-    const fim = () => { feito = true; clearTimeout(timer); ctrls.forEach((c) => c.abort()); };
+    const fim = () => { feito = true; clearTimeout(timer); desarmar(); ctrls.forEach((c) => c.abort()); };
     const seguir = () => {
       if (feito) return;
       if (prox < espelhos.length && !prazo.aborted) return lancar();
@@ -361,7 +375,7 @@ export function corrida(q, ms, espelhos = OVERPASS, { conclusivo = temArea, cons
 // 3-4x isso — era a maior parte da espera. Cache por instância: a mesma cidade não pergunta 2x.
 // Só aceita fronteira administrativa com o MESMO nome digitado (sem acento); se não bater, cai
 // pra resolução antiga por nome no Overpass, que continua aí como rede de segurança.
-const AREAS = new Map();
+const AREAS = new Map(), NOMES = new Map();
 const semAcento = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const NAO_CIDADE = new Set(['country', 'state', 'region', 'county', 'state_district', 'province']);
 const urlNominatim = (paisId, { escopo, estado, cidade }) => {
@@ -377,17 +391,57 @@ export async function areaNominatim(paisId, regiao, ms = 5000) {
   const alvo = escopo === 'cidade' ? cidade : nomeEstado;
   const k = [paisId, escopo, semAcento(nomeEstado), semAcento(cidade)].join('|');
   if (AREAS.has(k)) return AREAS.get(k);
+  const { signal, desarmar } = prazoDe(Math.max(ms, 1000));
   try {
-    const r = await fetch(urlNominatim(paisId, regiao), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(Math.max(ms, 1000)) });
+    const r = await fetch(urlNominatim(paisId, regiao), { headers: { 'user-agent': UA }, signal });
     const lista = await r.json();
     // jsonv2 chama de `category` o que o formato json chama de `class` — olhando só `class`, nenhum
     // resultado passava e TODA busca caía na resolução lenta por nome (foi o que aconteceu em produção)
     const hit = (Array.isArray(lista) ? lista : []).find((x) => x.osm_type === 'relation' && (x.category ?? x.class) === 'boundary' &&
       semAcento(x.name) === semAcento(alvo) && (escopo === 'cidade' ? !NAO_CIDADE.has(x.addresstype) : true));
     const id = hit ? 3600000000 + Number(hit.osm_id) : null;
-    if (id) AREAS.set(k, id);
+    if (id) { AREAS.set(k, id); NOMES.set(id, hit.name); }
     return id;
-  } catch { return null; }
+  } catch { return null; } finally { desarmar(); }
+}
+
+// Uma linha por (estabelecimento, tag): agrupar aqui é mais simples que 25 OPTIONALs, e traz toda
+// tag que o motor lê (telefone, whatsapp, site, endereço, horário…). A subconsulta fixa a fila —
+// mesma ordem e mesmo teto entre execuções, que é o que faz o offset da paginação valer.
+const sparqlPOIs = (rel, cat, limite) => `PREFIX osmrel: <https://www.openstreetmap.org/relation/>
+PREFIX osmkey: <${KEY}>
+PREFIX ogc: <http://www.opengis.net/rdf#>
+SELECT ?osm_id ?key ?value WHERE {
+  { SELECT DISTINCT ?osm_id WHERE {
+      osmrel:${rel} ogc:sfContains ?osm_id .
+      ${cat.osm.map((f) => { const [k, v] = f.split('='); return `{ ?osm_id osmkey:${k} ${JSON.stringify(v)} . }`; }).join(' UNION ')}
+      ?osm_id osmkey:name ?nome .
+    } ORDER BY ?osm_id LIMIT ${limite} }
+  ?osm_id ?key ?value .
+  FILTER(STRSTARTS(STR(?key), "${KEY}"))
+}`;
+
+// devolve no mesmo formato do Overpass ({type, id, tags}), então o resto da mineração não muda
+export async function qlever(rel, cat, limite, ms) {
+  const { signal, desarmar } = prazoDe(Math.max(ms, 1000));
+  try {
+    const r = await fetch(`${QLEVER}?query=${encodeURIComponent(sparqlPOIs(rel, cat, limite))}`,
+      { headers: { accept: 'application/sparql-results+json', 'user-agent': UA }, signal });
+    const txt = await r.text();
+    let d; try { d = JSON.parse(txt); } catch {}
+    if (!r.ok || !d?.results?.bindings)
+      throw Object.assign(new Error(`QLever HTTP ${r.status}: ${String(d?.exception ?? txt).replace(/\s+/g, ' ').slice(0, 160)}`), { status: r.status });
+    const porId = new Map();
+    for (const b of d.results.bindings) {
+      const m = /\/(node|way|relation)\/(\d+)$/.exec(b.osm_id?.value ?? '');
+      const chave = String(b.key?.value ?? '').slice(KEY.length);
+      if (!m || !chave || b.value?.value == null) continue;
+      const k = `${m[1]}/${m[2]}`;
+      if (!porId.has(k)) porId.set(k, { type: m[1], id: Number(m[2]), tags: {} });
+      porId.get(k).tags[chave] ??= String(b.value.value);
+    }
+    return [...porId.values()];
+  } finally { desarmar(); }
 }
 
 const consulta = (cat, areas, bruto, seg) => `[out:json][timeout:${seg}];
@@ -406,6 +460,13 @@ async function overpass(cat, regiao, bruto, prazo = Date.now() + ORCAMENTO) {
   const cidade = regiao.escopo === 'cidade';
 
   const id = await areaNominatim(regiao.pais, regiao, Math.min(5000, resta() - 3000));
+  if (id) {
+    try {
+      const els = await qlever(id - 3600000000, cat, bruto, Math.min(15000, resta() - 3000));
+      // a área vai junto, como no Overpass: é dela que sai o nome canônico do município
+      if (els.length) return [{ type: 'area', id, tags: { name: NOMES.get(id) ?? regiao.cidade } }, ...els];
+    } catch (e) { console.warn(`qlever falhou (${regiao.cidade || regiao.estado}): ${e.message}`); }
+  }
   const tentativas = [...(id ? [`area(id:${id})->.a;`] : []), ...areasAlvo(p, regiao)];
 
   let erro;
@@ -436,6 +497,10 @@ async function overpass(cat, regiao, bruto, prazo = Date.now() + ORCAMENTO) {
   return [];
 }
 
+const CANDIDATOS = { z: 'https://z.overpass-api.de/api/interpreter', lz4: 'https://lz4.overpass-api.de/api/interpreter',
+  nchc: 'https://overpass.nchc.org.tw/api/interpreter', fr: 'https://overpass.openstreetmap.fr/api/interpreter',
+  ru: 'https://overpass.openstreetmap.ru/api/interpreter' };
+
 // GET /api/diag — a mineração vista DE DENTRO da Vercel. IP de nuvem é tratado diferente pelas
 // bases públicas (limite por IP, bloqueio de faixa), então teste local não diz nada sobre lá.
 // ?modo=espelhos (padrão): Nominatim + cada espelho do Overpass sozinho, em paralelo, com a
@@ -451,10 +516,20 @@ async function diagnostico(q) {
     await new Promise((ok) => setTimeout(ok, ms));
     return { modo: 'dormir', ms };
   }
+  if (q.get('modo') === 'qlever') {
+    const rel = Number(q.get('rel')) || 297514, t = Date.now();
+    try {
+      const els = await qlever(rel, CATALOGO[nicho], Math.min(Number(q.get('limite')) || 50, 800), Math.min(Number(q.get('t')) || 6000, 25000));
+      return { modo: 'qlever', rel, nicho, ms: Date.now() - t, elementos: els.length,
+        com_telefone: els.filter((e) => telDe(e.tags)).length,
+        amostra: els.slice(0, 3).map((e) => `${e.type}/${e.id} "${e.tags.name}" tel=${telDe(e.tags) || '-'} site=${e.tags.website || '-'} tags=${Object.keys(e.tags).length}`) };
+    } catch (e) { return { modo: 'qlever', rel, nicho, ms: Date.now() - t, erro: erroDe(e) }; }
+  }
   if (q.get('modo') === 'minerar') {
     const t = Date.now();
     try {
-      const m = await minerar({ nicho, pais, escopo: 'cidade', estado, cidade, quantidade: 5, apenas_whatsapp: q.get('wpp') === '1' });
+      const m = await minerar({ nicho, pais, escopo: 'cidade', estado, cidade, quantidade: 5, apenas_whatsapp: q.get('wpp') === '1',
+        testar_sites: q.get('sites') !== '0' });
       return { modo: 'minerar', regiao, nicho, ms: Date.now() - t, encontrados: m.encontrados, disponiveis: m.disponiveis,
         analisados: m.analisados, amostra: m.leads.slice(0, 5).map((l) => `${l.nome} · ${l.whatsapp || l.telefone || 'sem tel'} · ${l.site_status}`) };
     } catch (e) { return { modo: 'minerar', regiao, nicho, ms: Date.now() - t, erro: erroDe(e) }; }
@@ -475,19 +550,21 @@ async function diagnostico(q) {
   const id = q.has('id') ? Number(q.get('id')) || null : await areaNominatim(pais, regiao, 5000);
   const areas = id ? `area(id:${id})->.a;` : areasAlvo(PAISES[pais], regiao)[0];
   const q2 = consulta(CATALOGO[nicho], areas, 800, Math.max(Math.floor(espera / 1000) - 2, 3));
-  // ?espelho=N testa um só: um espelho que segura a conexão não esconde o resultado dos outros
-  const alvos = q.has('espelho') ? [OVERPASS[Number(q.get('espelho'))]].filter(Boolean) : OVERPASS;
+  // ?espelho=N testa um só: um espelho que segura a conexão não esconde o resultado dos outros.
+  // ?url=<chave> testa um candidato fora da lista (só da lista abaixo: não é proxy aberto)
+  const alvos = q.has('url') ? [CANDIDATOS[q.get('url')]].filter(Boolean)
+    : q.has('espelho') ? [OVERPASS[Number(q.get('espelho'))]].filter(Boolean) : OVERPASS;
   const espelhos = await Promise.all(alvos.map(async (url) => {
     const t = Date.now();
+    const { signal, desarmar } = prazoDe(espera);
     try {
-      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q2,
-        signal: AbortSignal.timeout(espera) });
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q2, signal });
       const txt = await r.text();
       let d; try { d = JSON.parse(txt); } catch {}
       return { url, status: r.status, ms: Date.now() - t, json: !!d, remark: d?.remark,
         area: d ? temArea(d) : undefined, pois: d?.elements?.filter((e) => e.type !== 'area').length,
         inicio: d ? undefined : txt.replace(/\s+/g, ' ').slice(0, 160) };
-    } catch (e) { return { url, ms: Date.now() - t, erro: erroDe(e) }; }
+    } catch (e) { return { url, ms: Date.now() - t, erro: erroDe(e) }; } finally { desarmar(); }
   }));
   return { modo: 'espelhos', regiao, nicho, area_id: id, consulta_area: areas, nominatim, espelhos };
 }
@@ -523,8 +600,9 @@ async function checarSite(raw, prazo = Date.now() + RESERVA_SITES) {
     // a 2ª tentativa só entra se couber no prazo da resposta inteira
     const ms = Math.min(5000, prazo - t - 500);
     if (ms < 1500 && tentativa) break;
+    const { signal, desarmar } = prazoDe(Math.max(ms, 1500));
     try {
-      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(Math.max(ms, 1500)), headers: { 'user-agent': UA } });
+      const r = await fetch(u, { redirect: 'follow', signal, headers: { 'user-agent': UA } });
       const ms = Date.now() - t;
       // Cloudflare & cia: o site está de pé, só barrou o robô. Não dá pra chamar de defasado.
       if (BLOQUEIO.has(r.status)) return { site: host, site_ms: null, site_status: 'protegido' };
@@ -536,7 +614,7 @@ async function checarSite(raw, prazo = Date.now() + RESERVA_SITES) {
       ultimo = 'defasado';                 // 5xx/404: pode ser blip, tenta de novo antes de sentenciar
     } catch (e) {
       ultimo = e.name === 'TimeoutError' ? 'defasado' : 'nenhum';
-    }
+    } finally { desarmar(); }
   }
   return { site: host, site_ms: null, site_status: ultimo };
 }
@@ -590,7 +668,7 @@ const zapDe = (t) => umNumero(t['contact:whatsapp'] || t.whatsapp).replace(/^htt
 const chaveLead = (l) => soDigitos(l.telefone) || soDigitos(l.whatsapp) || `${l.nome}|${l.cidade}`.toLowerCase();
 
 async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cidade,
-                         quantidade = 25, apenas_whatsapp = false, apenas_email = false, offset = 0 }) {
+                         quantidade = 25, apenas_whatsapp = false, apenas_email = false, offset = 0, testar_sites = true }) {
   const cat = CATALOGO[nicho];
   const p = PAISES[pais];
   estado = (estado ?? uf ?? '').trim();          // `uf` é o nome antigo do campo
@@ -670,7 +748,8 @@ async function minerar({ nicho, pais = 'BR', escopo = 'cidade', estado, uf, cida
   const leads = await Promise.all(elementos.map(async (e) => {
     const t = e.tags;
     const tel = telDe(t);
-    const { zap_site, ...site } = await checarSite(t.website || t['contact:website'] || t.url || '', prazo);
+    const { zap_site, ...site } = testar_sites ? await checarSite(t.website || t['contact:website'] || t.url || '', prazo)
+      : { site: '', site_status: 'nenhum', site_ms: null };
     // ordem = força da evidência: tag da empresa no OSM > link no site dela > dedução pelo número
     const zap = zapDe(t) || zap_site || (ehCelular(tel, pais) ? tel : '');
     const fonte = zapDe(t) ? 'publicado' : zap_site ? 'site' : zap ? 'celular' : '';

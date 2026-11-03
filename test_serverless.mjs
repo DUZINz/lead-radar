@@ -131,6 +131,48 @@ assert.match(queries[0], /area\(id:3600000042\)/, 'área pelo id do Nominatim');
 assert.equal(rapida.json.leads[0].cidade, 'Maringá', 'nome canônico continua vindo da área');
 
 
+// QLever é a fonte principal quando o Nominatim acha a fronteira: uma linha por (lugar, tag),
+// agrupada no formato do Overpass. Overpass nem é chamado.
+const K = 'https://www.openstreetmap.org/wiki/Key:';
+const linha = (id, k, v) => ({ osm_id: { type: 'uri', value: `https://www.openstreetmap.org/${id}` },
+  key: { type: 'uri', value: K + k }, value: { type: 'literal', value: v } });
+let sparql = '', overpassChamado = 0;
+globalThis.fetch = async (url, op = {}) => {
+  const u = String(url);
+  if (u.includes('nominatim')) return json([{ osm_type: 'relation', osm_id: 297514, category: 'boundary', name: 'Curitiba', addresstype: 'city' }]);
+  if (u.includes('qlever')) { sparql = decodeURIComponent(u.split('query=')[1]);
+    return json({ head: { vars: ['osm_id', 'key', 'value'] }, results: { bindings: [
+      linha('node/11', 'name', 'Burger do Zé'), linha('node/11', 'phone', '+55 41 99876-5432'), linha('node/11', 'addr:street', 'Rua XV'),
+      linha('way/22', 'name', 'Pizzaria Boa'), linha('way/22', 'contact:whatsapp', '+55 41 98888-1111'),
+      linha('node/33', 'name', 'Prefeitura Municipal'), linha('node/33', 'amenity', 'restaurant')] } }); }
+  if (op.method === 'POST') { overpassChamado++; return json({ elements: [] }); }
+  throw new TypeError('sem rede pro site');
+};
+const viaQ = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'BR', escopo: 'cidade', estado: 'PR', cidade: 'curitiba' });
+assert.equal(overpassChamado, 0, 'com QLever respondendo, o Overpass não é chamado');
+assert.match(sparql, /osmrel:297514 ogc:sfContains \?osm_id/, 'consulta pela fronteira do Nominatim');
+assert.match(sparql, /osmkey:amenity "restaurant"/);
+assert.equal(viaQ.json.encontrados, 2, 'prefeitura é descartada, os 2 restaurantes ficam: ' + JSON.stringify(viaQ.json).slice(0, 300));
+const zeh = viaQ.json.leads.find((l) => l.nome === 'Burger do Zé');
+assert.equal(zeh.cidade, 'Curitiba', 'nome canônico do município vem do Nominatim');
+assert.equal(zeh.whatsapp, '(41) 99876-5432');
+assert.equal(zeh.cnpj, 'OSM-node-11', 'mesma chave estável do Overpass');
+assert.ok(viaQ.json.leads.find((l) => l.nome === 'Pizzaria Boa').whatsapp_fonte === 'publicado');
+
+// QLever fora do ar: cai no Overpass, sem derrubar a busca
+overpassChamado = 0;
+globalThis.fetch = async (url, op = {}) => {
+  const u = String(url);
+  if (u.includes('nominatim')) return json([{ osm_type: 'relation', osm_id: 297514, category: 'boundary', name: 'Curitiba', addresstype: 'city' }]);
+  if (u.includes('qlever')) return new Response('<html>502 Bad Gateway</html>', { status: 502 });
+  if (op.method === 'POST') { overpassChamado++; return json({ elements: [{ type: 'area', id: 3600297514, tags: { name: 'Curitiba' } },
+    { type: 'node', id: 9, tags: { name: 'Bar Reserva', phone: '+55 41 99111-2222' } }] }); }
+  throw new TypeError('sem rede pro site');
+};
+const reserva = await chamar('POST', '/api/minerar', { nicho: 'restaurantes', pais: 'BR', escopo: 'cidade', estado: 'PR', cidade: 'Curitiba' });
+assert.equal(reserva.json.encontrados, 1, JSON.stringify(reserva.json).slice(0, 300));
+assert.ok(overpassChamado >= 1, 'Overpass entrou como reserva');
+
 // /api/diag responde JSON nos dois modos (é o que dá pra abrir de fora pra ver a Vercel por dentro)
 const dEsp = await chamar('GET', '/api/diag?cidade=Maringa&estado=PR');
 assert.equal(dEsp.json.espelhos.length, 4, 'um relatório por espelho');
