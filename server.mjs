@@ -452,23 +452,27 @@ async function diagnostico(q) {
         analisados: m.analisados, amostra: m.leads.slice(0, 5).map((l) => `${l.nome} · ${l.whatsapp || l.telefone || 'sem tel'} · ${l.site_status}`) };
     } catch (e) { return { modo: 'minerar', regiao, nicho, ms: Date.now() - t, erro: erroDe(e) }; }
   }
+  // cada modo cabe em ~15s: quem lê isso de fora (navegador, WebFetch) desiste antes dos 60s da function
+  const espera = Math.min(Math.max(Number(q.get('t')) || 12000, 2000), 25000);
   const t0 = Date.now();
   let nominatim;
-  try {
-    const r = await fetch(urlNominatim(pais, regiao), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
+  if (q.get('modo') !== 'espelhos') try {
+    const r = await fetch(urlNominatim(pais, regiao), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(6000) });
     const txt = await r.text();
     let lista; try { lista = JSON.parse(txt); } catch {}
     nominatim = { status: r.status, ms: Date.now() - t0, resultados: Array.isArray(lista)
       ? lista.map((x) => `${x.osm_type}/${x.osm_id} ${x.class}/${x.type} ${x.addresstype} "${x.name}"`) : txt.slice(0, 200) };
   } catch (e) { nominatim = { ms: Date.now() - t0, erro: erroDe(e) }; }
-  const id = await areaNominatim(pais, regiao);
+  if (q.get('modo') === 'nominatim') return { modo: 'nominatim', regiao, nominatim };
+  // ?id= pula o Nominatim (já medido no modo nominatim); ?id=0 força a resolução antiga por nome
+  const id = q.has('id') ? Number(q.get('id')) || null : await areaNominatim(pais, regiao, 5000);
   const areas = id ? `area(id:${id})->.a;` : areasAlvo(PAISES[pais], regiao)[0];
-  const q2 = consulta(CATALOGO[nicho], areas, 800, 20);
+  const q2 = consulta(CATALOGO[nicho], areas, 800, Math.max(Math.floor(espera / 1000) - 2, 3));
   const espelhos = await Promise.all(OVERPASS.map(async (url) => {
     const t = Date.now();
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': UA }, body: q2,
-        signal: AbortSignal.timeout(25000) });
+        signal: AbortSignal.timeout(espera) });
       const txt = await r.text();
       let d; try { d = JSON.parse(txt); } catch {}
       return { url, status: r.status, ms: Date.now() - t, json: !!d, remark: d?.remark,
